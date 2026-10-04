@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node --experimental-ffi "$(dirname "$(readlink -f "$0")")/../dist/main.js" "$@"

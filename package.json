@@ -1,0 +1,22 @@
+{
+  "name": "sereno",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A terminal dashboard for a Linux home server",
+  "repository": { "type": "git", "url": "https://github.com/ingenious-agency/sereno.git" },
+  "files": ["bin/", "dist/", "config.example.json", "README.md"],
+  "type": "module",
+  "engines": { "node": ">=26.4.0" },
+  "bin": { "sereno": "bin/sereno" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "start": "node --experimental-ffi src/main.ts",
+    "fixtures": "node --experimental-ffi src/main.ts --fixtures",
+    "check": "tsc --noEmit",
+    "test": "node --experimental-ffi --test test/*.test.ts",
+    "smoke": "node src/main.ts --snapshot"
+  },
+  "dependencies": { "@opentui/core": "0.5.14" },
+  "devDependencies": { "@types/node": "^26.0.0", "typescript": "^5.9.3" }
+}

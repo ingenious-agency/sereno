@@ -1,0 +1,22 @@
+{
+  "explain": { "provider": "codex" },
+  "projectRoots": ["~/Work/Projects"],
+  "mappings": [
+    {
+      "resource": "systemd:user:example-web.service",
+      "projects": ["~/Work/Projects/example"]
+    },
+    {
+      "resource": "container:REPLACE_WITH_FULL_CONTAINER_ID",
+      "projects": ["~/Work/Projects/example", "~/Work/Projects/another-project"]
+    }
+  ],
+  "sites": [
+    {
+      "url": "http://localhost:3000/",
+      "scope": "localhost",
+      "backend": "http://127.0.0.1:3000",
+      "projects": ["~/Work/Projects/example"]
+    }
+  ]
+}
