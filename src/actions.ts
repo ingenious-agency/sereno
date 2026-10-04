@@ -31,7 +31,7 @@ export function cleanupAction(): Action {
 }
 export function openAction(site: Site): Action { return { target: site.id, scope: `Open ${safeUrl(site.url)} using the OS URL handler.`, command: { file: "xdg-open", args: [safeUrl(site.url)], timeout: 10000 }, destructive: false, refresh: "none" }; }
 export function httpCommand(site: Site): Command {
-  return { file: "curl", args: ["-q", "--silent", "--show-error", "--head", "--output", "/dev/null", "--write-out", "%{http_code}", "--connect-timeout", "3", "--max-time", "6", "--max-redirs", "0", "--proto", "=http,https", "--noproxy", "*", "--url", safeUrl(site.url)], timeout: 8000, limit: 8192 };
+  return { file: "curl", args: ["-q", "--globoff", "--silent", "--show-error", "--head", "--output", "/dev/null", "--write-out", "%{http_code}", "--connect-timeout", "3", "--max-time", "6", "--max-redirs", "0", "--proto", "=http,https", "--noproxy", "*", "--url", safeUrl(site.url)], timeout: 8000, limit: 8192 };
 }
 export async function executeAction(action: Action, confirmed: boolean, runner: Runner, signal?: AbortSignal): Promise<Result> {
   if (action.destructive && !confirmed) throw new Error("Confirmation required for this exact action");
