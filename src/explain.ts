@@ -43,11 +43,24 @@ export function explanationSnapshot(store: Store, row: Row | undefined, screen: 
 }
 
 const authEnv = { OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined, OPENAI_BASE_URL: undefined };
+function ollamaCommand(endpoint: "status" | "show" | "generate", body?: object): Command {
+  return { file: "curl", args: ["-q", "--globoff", "--silent", "--show-error", "--fail-with-body", "--noproxy", "*", "--proto", "=http", "--max-redirs", "0", "--connect-timeout", "3", "--max-time", endpoint === "generate" ? "120" : "8",
+    ...(body ? ["--header", "Content-Type: application/json", "--data-binary", "@-"] : []), "--url", `http://127.0.0.1:11434/api/${endpoint}`],
+    ...(body ? { stdin: JSON.stringify(body) } : {}), timeout: endpoint === "generate" ? 120000 : 8000, limit: 128 * 1024 };
+}
+function ollamaJSON(text: string): Record<string, any> {
+  let value;
+  try { value = JSON.parse(text); } catch { throw new Error("Invalid Ollama JSON response."); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Ollama JSON response.");
+  if (value.error) throw new Error(`Ollama: ${redact(String(value.error))}`);
+  return value;
+}
 export function explanationCommand(config: Config["explain"], snapshot: string, cwd: string): Command {
   const prompt = `${instructions}\n\nBEGIN UNTRUSTED SNAPSHOT\n${snapshot}\nEND UNTRUSTED SNAPSHOT\n\nExplain this snapshot now.`;
   if (config?.provider === "ollama") {
     if (!config.model) throw new Error("Set explain.model to an installed Ollama model.");
-    return { file: "ollama", args: ["run", config.model], cwd, stdin: prompt, env: { OLLAMA_HOST: "127.0.0.1:11434" }, timeout: 120000, limit: 128 * 1024 };
+    // The generate API fails for missing models; unlike `ollama run`, it does not pull.
+    return { ...ollamaCommand("generate", { model: config.model, prompt, stream: false }), cwd };
   }
   return {
     file: "codex", args: ["exec", "--ignore-user-config", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "--color", "never", "--json",
@@ -80,10 +93,18 @@ export async function explain(config: Config["explain"], snapshot: string, runne
     }
   } else {
     if (!config.model) throw new Error("Set explain.model to an installed Ollama model.");
-    // `ollama run` can pull absent models automatically; check local availability first.
-    const installed = await runner({ file: "ollama", args: ["show", config.model], env: { OLLAMA_HOST: "127.0.0.1:11434" }, timeout: 8000, limit: 16384 }, signal);
+    const status = await runner(ollamaCommand("status"), signal);
     if (signal.aborted) throw new Error("cancelled");
-    if (installed.code !== 0 || installed.problem || installed.truncated) throw new Error(`Local model unavailable. Start Ollama and install ${config.model} outside Sereno, then retry.\n${redact(installed.problem ?? installed.stderr)}`);
+    if (status.code !== 0 || status.problem || status.truncated || ollamaJSON(status.stdout).cloud?.disabled !== true) {
+      throw new Error("Local inference not verified. Run an Ollama version exposing /api/status with OLLAMA_NO_CLOUD=1 set on the daemon, then retry. No snapshot was submitted.");
+    }
+    const installed = await runner(ollamaCommand("show", { model: config.model }), signal);
+    if (signal.aborted) throw new Error("cancelled");
+    if (installed.code !== 0 || installed.problem || installed.truncated) throw new Error(`Local model unavailable. Install ${config.model} outside Sereno, then retry.\n${redact(installed.problem ?? installed.stderr)}`);
+    const model = ollamaJSON(installed.stdout);
+    if (model.remote_model || model.remote_host || !["gguf", "safetensors"].includes(model.details?.format) || !model.model_info || typeof model.model_info !== "object" || Array.isArray(model.model_info)) {
+      throw new Error("Local model metadata not verified; remote/cloud models and aliases are not supported. No snapshot was submitted.");
+    }
   }
   if (signal.aborted) throw new Error("cancelled");
   // Keep the explanation invocation outside project repos and their local instructions/configs.
@@ -95,7 +116,12 @@ export async function explain(config: Config["explain"], snapshot: string, runne
       if (config?.provider !== "ollama") { try { codexAnswer(result.stdout); } catch (e) { detail += `\n${e}`; } }
       throw new Error(`Explanation unavailable (exit ${result.code ?? "none"}): ${detail}`);
     }
-    return config?.provider === "ollama" ? redact(requireOutput(result)).trim() || "The local model returned no text." : codexAnswer(requireOutput(result));
+    if (config?.provider === "ollama") {
+      const answer = ollamaJSON(requireOutput(result));
+      if (answer.remote_model || answer.remote_host || answer.done !== true || typeof answer.response !== "string") throw new Error("Unexpected Ollama generation response; local completion not verified.");
+      return redact(answer.response).trim() || "The local model returned no text.";
+    }
+    return codexAnswer(requireOutput(result));
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
@@ -105,7 +131,7 @@ export function installExplain(ui: Dashboard) {
   ui.onClose = () => { active?.abort(); priorClose?.(); };
   ui.onExplain = (row, screen, panel) => {
     const snapshot = explanationSnapshot(ui.store, row, screen, panel);
-    const provider = ui.store.config.explain?.provider === "ollama" ? `Local Ollama · ${ui.store.config.explain.model}` : "Codex · ChatGPT subscription (cloud inference)";
+    const provider = ui.store.config.explain?.provider === "ollama" ? `Ollama · ${ui.store.config.explain.model} · local-only checks required` : "Codex · ChatGPT subscription (cloud inference)";
     active?.abort();
     const controller = active = new AbortController();
     const overlay: Panel = { title: "Explain what I’m seeing", text: `${provider}\nTarget: ${row?.type === "text" ? row.text : screen.detail ? screen.title : row?.text ?? screen.title}\n\nPreparing explanation…`, cancel: () => controller.abort() };
