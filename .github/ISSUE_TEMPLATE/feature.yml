@@ -1,0 +1,18 @@
+name: Feature request
+description: Suggest a focused improvement for this local Linux dashboard.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe your use case without private infrastructure details.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Proposed improvement
+      description: Explain the behavior you would like and any alternatives you considered.
+    validations:
+      required: true

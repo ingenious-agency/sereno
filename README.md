@@ -1,5 +1,8 @@
 # Sereno
 
+[![CI](https://github.com/ingenious-agency/sereno/actions/workflows/ci.yml/badge.svg)](https://github.com/ingenious-agency/sereno/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Sereno is a terminal dashboard for your Linux home server. See what's running, which project it belongs to, how your sites are routed, and where your disk space is going—all without switching between a dozen commands.
 
 Built with [OpenTUI](https://github.com/anomalyco/opentui) and TypeScript. It uses the tools already on your machine: Docker, Compose, systemd, Tailscale, Kamal proxy, and standard Linux utilities. There's no background daemon or separate monitoring service to set up.
@@ -206,3 +209,11 @@ npm pack
 ```
 
 `npm pack` builds the app first. The package includes the launcher, compiled JavaScript, README and configuration example. Tests, recordings, TypeScript source and development dependencies aren't included. `private: true` guards against accidental npm publication.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and pull requests. Use fixture data for public examples and screenshots. Report security vulnerabilities through [private security reporting](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Sereno Contributors.

@@ -2,3 +2,18 @@ node_modules/
 dist/
 *.tgz
 *.log
+
+# Local settings and discovery output
+.env
+.env.*
+!.env.example
+!.env.*.example
+/config.json
+/config.local.json
+sereno-snapshot*.json
+
+# Recordings can reveal the local machine's configuration
+*.mp4
+*.webm
+*.mov
+*.cast

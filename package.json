@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "A terminal dashboard for a Linux home server",
+  "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/ingenious-agency/sereno.git" },
   "files": ["bin/", "dist/", "config.example.json", "README.md"],
   "type": "module",

@@ -1,0 +1,30 @@
+name: Bug report
+description: Report unexpected behavior in Sereno.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic or sanitized examples. Do not attach credentials, local configuration, live snapshots, internal URLs, or personal paths.
+        For a new security vulnerability, use [private reporting](https://github.com/ingenious-agency/sereno/security/advisories/new).
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Include minimal steps. Use fixture mode or mocked data when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: Sereno version or commit, Node.js version, Linux distribution, and relevant tool versions.
+    validations:
+      required: true
