@@ -7,8 +7,29 @@ export type Runner = (command: Command, signal?: AbortSignal, progress?: (bytes:
 
 // Strip terminal control sequences before any external text reaches the renderer.
 export function clean(text: string): string {
-  return text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+  const output: string[] = [];
+  for (let i = 0; i < text.length;) {
+    const c = text.charCodeAt(i++);
+    const escape = c === 0x1b;
+    const next = escape ? text.charCodeAt(i) : c;
+    if ((escape && next === 0x5d) || c === 0x9d) {
+      if (escape) i++;
+      // OSC ends at the first BEL or ST. Unterminated payload stays hidden.
+      while (i < text.length) {
+        const part = text.charCodeAt(i++);
+        if (part === 7 || part === 0x9c) break;
+        if (part === 0x1b && text.charCodeAt(i) === 0x5c) { i++; break; }
+      }
+    } else if ((escape && next === 0x5b) || c === 0x9b) {
+      if (escape) i++;
+      while (i < text.length && text.charCodeAt(i) >= 0x30 && text.charCodeAt(i) <= 0x3f) i++;
+      while (i < text.length && text.charCodeAt(i) >= 0x20 && text.charCodeAt(i) <= 0x2f) i++;
+      if (text.charCodeAt(i) >= 0x40 && text.charCodeAt(i) <= 0x7e) i++;
+    } else if (c === 9 || c === 10 || (c >= 0x20 && !(c >= 0x7f && c <= 0x9f))) {
+      output.push(text[i - 1]);
+    }
+  }
+  return output.join("");
 }
 export function redact(text: string): string {
   return clean(text)
