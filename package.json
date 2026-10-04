@@ -19,5 +19,5 @@
     "smoke": "node src/main.ts --snapshot"
   },
   "dependencies": { "@opentui/core": "0.5.14" },
-  "devDependencies": { "@types/node": "^26.0.0", "typescript": "^5.9.3" }
+  "devDependencies": { "@types/node": "^26.0.0", "typescript": "^7.0.2" }
 }
