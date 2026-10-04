@@ -1,4 +1,4 @@
-import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
+import { readFile, mkdir, mkdtemp, open, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { safeUrl } from "./runner.ts";
@@ -32,9 +32,18 @@ export async function loadConfig(path = configPath): Promise<Config> {
 }
 export async function saveMapping(config: Config, resource: string, projects: string[], path = configPath) {
   const next = { ...config, mappings: [...config.mappings.filter(m => m.resource !== resource), { resource, projects }] };
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
-  await rename(temporary, path);
+  const parent = dirname(path);
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const directory = await stat(parent);
+  if (directory.uid !== process.getuid?.() || (directory.mode & 0o022) !== 0) throw new Error("Configuration directory must be owned by the current user and not writable by group or others.");
+  // A private, unpredictable directory also protects the name between open and rename.
+  const temporaryDirectory = await mkdtemp(`${path}.tmp-`);
+  try {
+    const temporary = `${temporaryDirectory}/config.json`;
+    const file = await open(temporary, "wx", 0o600);
+    try { await file.writeFile(JSON.stringify(next, null, 2) + "\n"); }
+    finally { await file.close(); }
+    await rename(temporary, path);
+  } finally { await rm(temporaryDirectory, { recursive: true, force: true }); }
   config.mappings = next.mappings;
 }
