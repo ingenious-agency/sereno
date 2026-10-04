@@ -148,7 +148,9 @@ For a local model, install Ollama, start it, pull a model, and add this to your 
 }
 ```
 
-Sereno connects to Ollama at `127.0.0.1:11434`. Choose an installed local model, not a cloud model. Sereno doesn't download models or manage Ollama for you.
+Sereno connects to Ollama's HTTP API at `127.0.0.1:11434` using curl, without proxies or redirects. Choose an installed local model, not a cloud model or remote alias. Set `OLLAMA_NO_CLOUD=1` on the **Ollama daemon**, not just the Sereno process, and restart the daemon yourself after configuring it. Sereno requires `/api/status` to report cloud features disabled and `/api/show` to report local GGUF or safetensors metadata before sending any snapshot. Older daemons without that status endpoint fail closed; update Ollama to use this provider.
+
+Generation uses `/api/generate`, which fails if the model disappears instead of automatically pulling it. Sereno doesn't download models or manage Ollama for you. These checks trust the loopback daemon and its configuration; keep cloud features disabled for the entire request. For a strong local-only guarantee, also deny the daemon outbound network access (including across configuration changes or restarts).
 
 Explanations use a bounded snapshot of the selected item and related dashboard data. If you're viewing logs, their displayed text is included. Common secrets are redacted, but log redaction isn't foolproof. No repository files or environment dumps are included, and no AI requests run automatically.
 
