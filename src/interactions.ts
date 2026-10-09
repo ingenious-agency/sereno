@@ -354,7 +354,7 @@ export function installInteractions(ui: Dashboard) {
           return;
         }
       }
-      if (key === "b" && ui.section === 3) {
+      if (key === "b" && ui.section === 2) {
         void inspectDocker(true).catch(report);
         return;
       }

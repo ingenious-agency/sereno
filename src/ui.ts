@@ -75,7 +75,7 @@ export const theme = {
   error: "#e06c75",
   info: "#56b6c2",
 };
-const sections = ["Overview", "Groups", "Sites", "Storage"];
+const sections = ["Overview", "Groups", "Storage"];
 
 const c = (color: string, text: string | number) => fg(color)(String(text));
 const b = (color: string, text: string | number) => bold(fg(color)(String(text)));
@@ -504,17 +504,6 @@ export class Dashboard {
           ),
         ],
       };
-    if (this.section === 2) {
-      const sites = Object.values(store.tree.nodes).filter(
-        (n) => n.kind === "resource" && n.type === "website",
-      );
-      return {
-        title: "Sites",
-        rows: sites.length
-          ? sites.map(nodeRow)
-          : lines("No websites discovered. Add a website resource in the configuration."),
-      };
-    }
     const folders = [
       ...new Set(
         Object.values(store.tree.nodes)
@@ -634,9 +623,9 @@ export class Dashboard {
       );
     }
     if (this.section === 1) context.push(h("g", "new group"));
-    if (this.section === 3 || screen.folder || row?.type === "folder")
+    if (this.section === 2 || screen.folder || row?.type === "folder")
       context.push(h("s", "scan"), h("c", "cancel scan"));
-    if (this.section === 3 && !this.stack.length) context.push(h("b", "build-cache cleanup"));
+    if (this.section === 2 && !this.stack.length) context.push(h("b", "build-cache cleanup"));
     context.unshift(h("e", "explain"));
     context.push(h("v", "raw details"), h("z", "last output"));
     return [
@@ -674,7 +663,7 @@ export class Dashboard {
         "Navigation",
         "  ↑↓ / j k     move           PgUp PgDn   page",
         "  ⏎ enter      open detail    esc         back / clear filter",
-        "  tab ← →      switch section 1–4         jump to section",
+        `  tab ← →      switch section 1–${sections.length}         jump to section`,
         "",
         "General",
         "  /            search          r          refresh discovery",
@@ -811,10 +800,13 @@ export class Dashboard {
     } else if (key.name === "/") {
       this.searching = true;
       this.filter = "";
-    } else if (["1", "2", "3", "4", "tab", "left", "right"].includes(key.name)) {
+    } else if (
+      [...sections.map((_, index) => String(index + 1)), "tab", "left", "right"].includes(key.name)
+    ) {
       this.section = /^\d$/.test(key.name)
         ? Number(key.name) - 1
-        : (this.section + (key.name === "left" || key.shift ? 3 : 1)) % 4;
+        : (this.section + (key.name === "left" || key.shift ? sections.length - 1 : 1)) %
+          sections.length;
       this.stack = [];
       this.currentRows = [];
       this.selected = 0;

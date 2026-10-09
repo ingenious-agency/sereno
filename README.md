@@ -63,9 +63,9 @@ Press `g` to create a group, `m` to move an item, `n` to rename it, or Shift+L t
 
 An unavailable integration keeps its last inventory visible for the current session and disables its actions. Sereno's host discovery continues independently. Integration inventory is refreshed every 30 seconds; `r` refreshes it immediately.
 
-### Sites
+### Website resources
 
-Sites is a filtered view of the website resources in the same tree. Encargado's registered URLs appear alongside Tailscale, Funnel, Kamal, manual routes, and configured website resources.
+Websites live inside their groups alongside services and other resources. Encargado's registered URLs appear alongside Tailscale, Funnel, Kamal, manual routes, and configured website resources. There is no separate Sites section.
 
 A registered URL, a listening backend, and a successful HTTP response are separate facts. A stopped Encargado application can still have a persistent URL serving its Start page. That URL stays grouped with its application.
 
@@ -83,7 +83,7 @@ Folder totals aren't the same as physical disk usage, especially with Btrfs comp
 
 | Key                       | Action                                     |
 | ------------------------- | ------------------------------------------ |
-| `1`–`4`, Tab, ←/→         | Switch sections                            |
+| `1`–`3`, Tab, ←/→         | Switch sections                            |
 | ↑/↓, `j`/`k`              | Move selection                             |
 | Enter / Escape            | Open details / go back                     |
 | `/`                       | Search the current list                    |

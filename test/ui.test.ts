@@ -18,6 +18,16 @@ test("OpenTUI renders fixtures, supports navigation, filtering, details and narr
   try {
     await testUI.renderOnce();
     assert.match(testUI.captureCharFrame(), /FIXTURE MODE/);
+    assert.doesNotMatch(testUI.captureCharFrame(), /3 Sites/);
+    testUI.mockInput.pressKey("3");
+    await testUI.renderOnce();
+    assert.equal(ui.section, 2);
+    testUI.mockInput.pressTab();
+    await testUI.renderOnce();
+    assert.equal(ui.section, 0);
+    testUI.mockInput.pressArrow("left");
+    await testUI.renderOnce();
+    assert.equal(ui.section, 2);
     testUI.mockInput.pressKey("2");
     await testUI.renderOnce();
     assert.match(testUI.captureCharFrame(), /atlas/);
@@ -31,9 +41,17 @@ test("OpenTUI renders fixtures, supports navigation, filtering, details and narr
     await testUI.renderOnce();
     assert.match(testUI.captureCharFrame(), /Repository\s+\/fixtures\/projects\/beacon/);
     testUI.mockInput.pressEscape();
-    testUI.mockInput.pressKey("3");
+    testUI.mockInput.pressKey("2");
+    testUI.mockInput.pressKey("/");
+    await testUI.mockInput.typeText("atlas");
+    testUI.mockInput.pressEnter();
+    testUI.mockInput.pressEnter();
     await testUI.renderOnce();
     assert.match(testUI.captureCharFrame(), /302/);
+    for (let i = 0; i < 30 && ui.screen().rows[ui.selected]?.id !== "site:fixture"; i++)
+      testUI.mockInput.pressArrow("down");
+    assert.equal(ui.screen().rows[ui.selected].id, "site:fixture");
+    testUI.mockInput.pressEnter();
     testUI.mockInput.pressKey("h");
     await testUI.renderOnce();
     assert.match(testUI.captureCharFrame(), /Fixture mode/);
@@ -55,9 +73,9 @@ test("navigation stays responsive during pending discovery; unavailable tools ar
   const ui = new Dashboard(testUI.renderer, store);
   const pending = store.refreshResources();
   try {
-    testUI.mockInput.pressKey("4");
+    testUI.mockInput.pressKey("3");
     await testUI.renderOnce();
-    assert.equal(ui.section, 3);
+    assert.equal(ui.section, 2);
     assert.match(testUI.captureCharFrame(), /Storage/);
     testUI.mockInput.pressKey("2");
     await testUI.renderOnce();
@@ -126,7 +144,7 @@ test("command palette filters and runs contextual commands; help lists shortcuts
     setup.mockInput.pressEnter();
     await setup.renderOnce();
     assert.equal(ui.palette, undefined);
-    assert.equal(ui.section, 3);
+    assert.equal(ui.section, 2);
     assert.match(setup.captureCharFrame(), /Images, build cache/);
     setup.mockInput.pressKey("?");
     await setup.renderOnce();
