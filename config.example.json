@@ -1,7 +1,5 @@
 {
-  "projectRoots": [
-    "~/Work/Projects"
-  ],
+  "projectRoots": ["~/Work/Projects"],
   "encargado": {
     "enabled": true
   },
@@ -23,9 +21,7 @@
       {
         "id": "experiments",
         "name": "Experiments",
-        "labels": [
-          "dev"
-        ]
+        "labels": ["dev"]
       }
     ],
     "resources": [
@@ -42,9 +38,7 @@
         "id": "custom-worker",
         "name": "Local worker",
         "parent": "experiments",
-        "labels": [
-          "dev"
-        ],
+        "labels": ["dev"],
         "probe": {
           "file": "./bin/worker-status",
           "args": [],
@@ -83,9 +77,7 @@
         "resource": "compose:my-app:postgres",
         "group": "databases",
         "name": "Application database",
-        "labels": [
-          "local"
-        ]
+        "labels": ["local"]
       }
     ]
   }

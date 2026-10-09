@@ -9,37 +9,37 @@ Built with [OpenTUI](https://github.com/anomalyco/opentui) and TypeScript. It us
 
 ## Getting started
 
-You'll need Linux, **Node.js 26.4 or newer**, and npm.
+You'll need Linux, **Node.js 26.4 or newer**, and **pnpm 12.10.1** (pinned in `package.json`). See [pnpm's installation guide](https://pnpm.io/installation) to install it.
 
 ```sh
 git clone https://github.com/ingenious-agency/sereno.git
 cd sereno
-npm ci
-npm start
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm start
 ```
 
 To run it from anywhere:
 
 ```sh
-npm run build
-npm link
+pnpm run build
+pnpm add --global .
 sereno
 ```
 
-Run `npm run build` before `npm link`. This links the command to your checkout's compiled build. After pulling updates or editing the source, run `npm run build` again. If you use mise or another Node version manager, you may need to run `npm link` again after switching Node versions. `npm start` still runs directly from source during development.
+Run `pnpm run build` before `pnpm add --global .`. This registers the command from your checkout's compiled build. After pulling updates or editing the source, run `pnpm run build` again. If you use mise or another Node version manager, you may need to register the command again after switching Node versions. `pnpm start` still runs directly from source during development.
 
 ### Install a release
 
 Download the `.tgz` from [GitHub Releases](https://github.com/ingenious-agency/sereno/releases), then install it:
 
 ```sh
-npm install --global ./sereno-0.1.0.tgz
+pnpm add --global ./sereno-0.1.0.tgz
 sereno
 ```
 
-Release installs are separate from the development checkout. Install a newer tarball to update, or an older one to roll back. To uninstall, run `npm uninstall --global sereno`.
+Release installs are separate from the development checkout. Install a newer tarball to update, or an older one to roll back. To uninstall, run `pnpm remove --global sereno`.
 
-Sereno isn't published to npm. The tarball comes from GitHub; npm still downloads its dependencies during installation. Node.js 26.4+ is required for both installation methods.
+Sereno isn't published to npm. The tarball comes from GitHub; pnpm still downloads its dependencies during installation. Node.js 26.4+ is required for both installation methods.
 
 The launcher includes the experimental FFI flag required by OpenTUI. Run Sereno as your normal user; it doesn't use sudo or ask for elevated permissions. If a tool is missing or a resource isn't accessible, you'll see that in the UI.
 
@@ -81,26 +81,26 @@ Folder totals aren't the same as physical disk usage, especially with Btrfs comp
 
 ## Keyboard shortcuts
 
-| Key | Action |
-| --- | --- |
-| `1`–`4`, Tab, ←/→ | Switch sections |
-| ↑/↓, `j`/`k` | Move selection |
-| Enter / Escape | Open details / go back |
-| `/` | Search the current list |
-| Ctrl+P | Open the command palette |
-| `?` | Show shortcuts |
-| `r` | Refresh |
-| `v` | Show full details |
+| Key                       | Action                                     |
+| ------------------------- | ------------------------------------------ |
+| `1`–`4`, Tab, ←/→         | Switch sections                            |
+| ↑/↓, `j`/`k`              | Move selection                             |
+| Enter / Escape            | Open details / go back                     |
+| `/`                       | Search the current list                    |
+| Ctrl+P                    | Open the command palette                   |
+| `?`                       | Show shortcuts                             |
+| `r`                       | Refresh                                    |
+| `v`                       | Show full details                          |
 | `g` / `m` / `n` / Shift+L | Create group / move / rename / edit labels |
-| `l` | View recent logs |
-| `s` / `x` / `t` | Start / stop / restart when available |
-| Shift+A | Open the selected item's action menu |
-| `o` / `h` | Open a site / check its HTTP response |
-| `s` / `c` | Scan a folder / cancel a running command |
-| `b` in Storage | Preview Docker build-cache cleanup |
-| `e` | Ask AI to explain what you're looking at |
-| `z` | Reopen the last command output |
-| `q`, Ctrl+C | Quit |
+| `l`                       | View recent logs                           |
+| `s` / `x` / `t`           | Start / stop / restart when available      |
+| Shift+A                   | Open the selected item's action menu       |
+| `o` / `h`                 | Open a site / check its HTTP response      |
+| `s` / `c`                 | Scan a folder / cancel a running command   |
+| `b` in Storage            | Preview Docker build-cache cleanup         |
+| `e`                       | Ask AI to explain what you're looking at   |
+| `z`                       | Reopen the last command output             |
+| `q`, Ctrl+C               | Quit                                       |
 
 On wider terminals, the inspector shows details alongside your selection. On smaller terminals, use Enter or `v` for the full view.
 
@@ -135,7 +135,7 @@ Press `e` on a resource, metric, or dialog to get an explanation. Escape closes 
 By default, Sereno uses **Codex CLI with your ChatGPT subscription**, not an API key:
 
 ```sh
-npm install -g @openai/codex
+pnpm add --global @openai/codex
 codex login
 ```
 
@@ -246,10 +246,12 @@ CPU and memory measurements from processes, containers, and service cgroups can 
 ## Development
 
 ```sh
-npm run fixtures   # Browse sample data without executing actions
-npm run smoke      # Print a live discovery snapshot
-npm run check      # TypeScript checks
-npm test
+pnpm run fixtures       # Browse sample data without executing actions
+pnpm run smoke          # Print a live discovery snapshot
+pnpm run format         # Format source, tests, configuration, and documentation
+pnpm run format:check   # Check formatting without changing files
+pnpm run check          # TypeScript checks
+pnpm test
 ```
 
 `src/domain.ts` defines groups, resources, actions, tree reconciliation, and action planning. `src/application.ts` owns refresh, organization persistence, and execution policy through Effect v4 services and injected layers. Providers translate external systems into the domain; OpenTUI reads the resulting tree through the store facade. The existing bounded runner handles command execution. Metrics refresh frequently; discovery runs less often; directory scans happen on demand. Tests cover parsing, associations, navigation, and action targeting. Lifecycle tests use mocked execution.
@@ -257,13 +259,14 @@ npm test
 To build a release tarball without publishing to npm:
 
 ```sh
-npm ci
-npm run check
-npm test
-npm pack
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run format:check
+pnpm run check
+pnpm test
+pnpm pack
 ```
 
-`npm pack` builds the app first. The package includes the launcher, compiled JavaScript, README and configuration example. Tests, recordings, TypeScript source and development dependencies aren't included. `private: true` guards against accidental npm publication.
+`pnpm pack` builds the app first. The package includes the launcher, compiled JavaScript, README and configuration example. Tests, recordings, TypeScript source and development dependencies aren't included. `private: true` guards against accidental npm publication.
 
 ## Contributing
 

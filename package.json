@@ -15,6 +15,7 @@
     "README.md"
   ],
   "type": "module",
+  "packageManager": "pnpm@12.10.1",
   "engines": {
     "node": ">=26.4.0"
   },
@@ -23,10 +24,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepack": "npm run build",
+    "prepack": "pnpm run build",
     "start": "node --experimental-ffi src/main.ts",
     "fixtures": "node --experimental-ffi src/main.ts --fixtures",
     "check": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "node --experimental-ffi --test test/*.test.ts",
     "smoke": "node src/main.ts --snapshot"
   },
@@ -36,6 +39,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
+    "prettier": "3.9.9",
     "typescript": "^5.9.3"
   }
 }
