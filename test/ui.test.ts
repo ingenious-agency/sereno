@@ -6,6 +6,10 @@ import { fixtureStore } from "../src/fixtures.ts";
 import { Store } from "../src/store.ts";
 import { installInteractions } from "../src/interactions.ts";
 import type { Result } from "../src/runner.ts";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { decodeOrganization } from "../src/domain-schema.ts";
 
 test("OpenTUI renders fixtures, supports navigation, filtering, details and narrow resize", async () => {
   const testUI = await createTestRenderer({ width: 100, height: 28 });
@@ -44,17 +48,22 @@ test("UI previews exact lifecycle command, requires confirmation and shows refre
     const stdout = command.file === "systemctl" ? "[]" : command.file === "tailscale" ? "{}" : "";
     return { stdout, stderr: "", code: 0, truncated: false, duration: 1 };
   };
+  store.discoverHost = async () => {};
   const setup = await createTestRenderer({ width: 100, height: 28 });
   const ui = new Dashboard(setup.renderer, store); installInteractions(ui);
   ui.stack = [{ type: "resource", id: store.resources[0].id }]; ui.render();
   try {
-    setup.mockInput.pressKey("t"); await setup.renderOnce();
+    setup.mockInput.pressKey("t");
+    for (let i = 0; i < 100 && !ui.panel?.confirm; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    await setup.renderOnce();
     assert.match(ui.panel!.text, /All replicas/); assert.match(ui.panel!.text, /--no-deps/); assert.equal(commands.length, 0);
     setup.mockInput.pressEscape(); assert.equal(commands.length, 0);
-    setup.mockInput.pressKey("t"); setup.mockInput.pressKey("y");
+    setup.mockInput.pressKey("t");
+    for (let i = 0; i < 100 && !ui.panel?.confirm; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    setup.mockInput.pressKey("y");
     await setup.waitFor(() => Boolean(ui.panel?.text.includes("Observed after refresh")));
     assert.equal(commands.filter(c => c.includes("restart")).length, 1);
-    assert.match(ui.panel!.text, /Exit: 0/); assert.match(ui.panel!.text, /target no longer discovered/);
+    assert.match(ui.panel!.text, /Exit: 0/); assert.match(ui.panel!.text, /running/);
   } finally { ui.close(); }
 });
 
@@ -68,4 +77,43 @@ test("command palette filters and runs contextual commands; help lists shortcuts
     assert.equal(ui.palette, undefined); assert.equal(ui.section, 3); assert.match(setup.captureCharFrame(), /Images, build cache/);
     setup.mockInput.pressKey("?"); await setup.renderOnce(); assert.match(setup.captureCharFrame(), /Keyboard shortcuts/); assert.match(ui.panel!.text, /build-cache cleanup/);
   } finally { ui.close(); }
+});
+
+test("rename and label editors accept text without triggering global shortcuts and cancel without writes", async () => {
+  const setup = await createTestRenderer({ width: 110, height: 30, kittyKeyboard: true });
+  const store = fixtureStore(); const before = JSON.stringify(store.config);
+  const ui = new Dashboard(setup.renderer, store); installInteractions(ui);
+  ui.stack = [{ type: "node", id: "compose:atlas:web" }]; ui.render();
+  try {
+    setup.mockInput.pressKey("n"); assert.match(ui.panel!.title, /Rename/);
+    await setup.mockInput.typeText(" Quiet queues"); assert.match(ui.panel!.text, /Quiet queues/);
+    assert.equal(ui.section, 0); assert.equal(ui.explanation, undefined);
+    setup.mockInput.pressEscape();
+    setup.mockInput.pressKey("l", { shift: true }); assert.match(ui.panel!.title, /Labels/);
+    await setup.mockInput.typeText("dev, important"); assert.match(ui.panel!.text, /dev, important/);
+    setup.mockInput.pressEscape(); assert.equal(JSON.stringify(store.config), before);
+    setup.mockInput.pressKey("m"); assert.match(ui.panel!.title, /Move/);
+    assert.match(ui.panel!.text, /Shared infrastructure/); setup.mockInput.pressEscape();
+  } finally { ui.close(); }
+});
+
+test("OpenTUI creates nested groups and persists labels through the organization workflow", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sereno-ui-")), path = join(directory, "config.json");
+  const setup = await createTestRenderer({ width: 110, height: 30, kittyKeyboard: true });
+  const store = new Store({ projectRoots: [], mappings: [], sites: [], encargado: { enabled: false }, organization: decodeOrganization({ version: 1, groups: [{ id: "parent", name: "Parent" }], resources: [], placements: [] }) }, async c => ({ stdout: c.file === "systemctl" ? "[]" : c.file === "tailscale" ? "{}" : "", stderr: "", code: 0, duration: 1, truncated: false }), path);
+  await store.refreshTree();
+  const ui = new Dashboard(setup.renderer, store); installInteractions(ui);
+  ui.section = 1; ui.stack = [{ type: "group", id: "parent" }]; ui.render();
+  const settle = async () => { for (let i = 0; i < 100 && ui.panel?.text !== "Saved"; i++) await new Promise(resolve => setTimeout(resolve, 5)); assert.equal(ui.panel?.text, "Saved"); };
+  try {
+    setup.mockInput.pressKey("g"); await setup.mockInput.typeText("Child"); setup.mockInput.pressEnter(); await settle();
+    const child = Object.values(store.tree.nodes).find(n => n.name === "Child")!;
+    assert.equal(child.parent, "parent");
+    setup.mockInput.pressEscape(); ui.stack = [{ type: "group", id: child.id }]; ui.render();
+    setup.mockInput.pressKey("l", { shift: true }); await setup.mockInput.typeText("dev, quiet"); setup.mockInput.pressEnter(); await settle();
+    assert.deepEqual(store.tree.nodes[child.id].labels, ["dev", "quiet"]);
+    const saved = JSON.parse(await readFile(path, "utf8"));
+    assert.equal(saved.organization.groups.find((g: { id: string }) => g.id === child.id).parent, "parent");
+    assert.deepEqual(saved.organization.placements[0].labels, ["dev", "quiet"]);
+  } finally { ui.close(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -1,10 +1,9 @@
-import { saveMapping } from "./config.ts";
-import { cleanupAction, cleanupPreview, executeAction, httpCommand, openAction, resourceAction, type Action } from "./actions.ts";
-import { bytes, type Resource, type Scan, type Site } from "./model.ts";
+import { cleanupAction, cleanupPreview, executeAction, type Action } from "./actions.ts";
+import { bytes, type Scan } from "./model.ts";
 import { childFolders, scanCommand, scanFolder } from "./storage.ts";
 import { displayCommand, failureHint, redact, type Command, type Result } from "./runner.ts";
 import { type Dashboard, type Row, type Screen } from "./ui.ts";
-import { executeProjectStop, formatStopPlan, planProjectStop, type StopPlan } from "./project-stop.ts";
+import type { Node, ActionPlan } from "./domain.ts";
 
 export function installInteractions(ui: Dashboard) {
   const store = ui.store;
@@ -14,86 +13,69 @@ export function installInteractions(ui: Dashboard) {
   let lastOutput: { title: string; text: string } | undefined;
   let dockerStorage = "Not collected";
   const pulse = setInterval(() => {
-    if (job) { ui.notice = `${job.title} · running ${Math.floor((Date.now() - job.started) / 1000)}s · ${bytes(job.progress)} received · c cancel`; ui.render(); }
+    if (job) { ui.notice = `${job.title} · running ${Math.floor((Date.now() - job.started) / 1000)}s · c cancel`; ui.render(); }
   }, 500);
   ui.onClose = () => { job?.controller.abort(); clearInterval(pulse); };
-  const output = (command: Command, result: Result) => `${displayCommand(command)}\n\nstdout:\n${redact(result.stdout) || "(empty)"}\n\nstderr:\n${redact(result.stderr) || "(empty)"}\n\nExit: ${result.code ?? "none"}${result.signal ? ` · signal ${result.signal}` : ""} · ${result.duration}ms\n${result.problem ?? ""}${result.truncated ? " · PARTIAL / output truncated" : ""}\n${failureHint(result)}`;
+  const output = (command: Command, result: Result) => `${displayCommand(command)}\n\nstdout:\n${redact(result.stdout) || "(empty)"}\n\nstderr:\n${redact(result.stderr) || "(empty)"}\n\nExit: ${result.code ?? "none"} · ${result.duration}ms\n${result.problem ?? ""}${result.truncated ? " · output truncated" : ""}\n${failureHint(result)}`;
   const begin = (title: string) => {
     if (job) throw new Error(`Already running: ${job.title}. Press c to cancel.`);
-    if (ui.fixture) throw new Error("Fixture mode: command execution, HTTP checks and configuration writes are disabled.");
+    if (ui.fixture) throw new Error("Fixture mode: actions and configuration writes are disabled.");
     job = { controller: new AbortController(), title, started: Date.now(), progress: 0 };
-    ui.showPanel({ title, text: "Running asynchronously…", cancel: () => job?.controller.abort() });
-    return job;
+    ui.showPanel({ title, text: "Running…", cancel: () => job?.controller.abort() }); return job;
   };
   const finish = (title: string, text: string) => {
     lastOutput = { title, text }; job = undefined; ui.notice = `${title} finished · z reopen output`;
     if (ui.panel) ui.showPanel(lastOutput); else ui.render();
   };
+  const report = (error: unknown) => { job?.controller.abort(); job = undefined; ui.showPanel({ title: "Action unavailable", text: redact(String(error)) }); };
+  // Storage commands retain their existing explicit preview and bounded runner.
   const execute = async (action: Action, confirmed = false) => {
-    if (action.resourceId && action.destructive) {
-      const resource = store.resources.find(r => r.id === action.resourceId);
-      if (!resource || resource.metadata.collectionState === "unavailable") throw new Error("Target no longer available in current discovery; refresh before acting.");
-    }
     const current = begin(action.target);
-    ui.panel!.text = `Target: ${action.target}\nScope: ${action.scope}\nCommand: ${displayCommand(action.command)}\n\nRunning…`; ui.render();
     const result = await executeAction(action, confirmed, store.runner, current.controller.signal);
-    let observation = "";
-    if (action.refresh === "resources") {
-      await store.refreshResources(); await store.refreshSites();
-      const r = store.resources.find(r => r.id === action.resourceId);
-      const source = action.resourceId?.startsWith("container:") ? store.sources.Docker : store.sources[action.resourceId?.startsWith("systemd:user:") ? "User services" : "System services"];
-      observation = `\n\nObserved after refresh: ${source?.state === "unavailable" ? "unavailable; previous data is stale" : r?.status ?? "target no longer discovered"}.\n${action.verb === "restart" ? "A running state alone cannot prove application health or successful restart." : ""}`;
-    }
-    if (action.refresh === "storage") {
-      const inventory = await store.runner(cleanupPreview, store.signal); dockerStorage = output(cleanupPreview, inventory);
-      await store.filesystem(); observation = `\n\nPost-action Docker inventory:\n${dockerStorage}`;
-    }
-    finish(action.target, `Scope: ${action.scope}\n${output(action.command, result)}${observation}`);
+    await store.filesystem(); finish(action.target, output(action.command, result));
   };
-  const prepare = (action: Action) => {
-    if (job) throw new Error(`Already running: ${job.title}`);
-    if (ui.fixture) throw new Error("Fixture mode: actions disabled.");
-    const text = `Target: ${action.target}\nScope: ${action.scope}\n\n${displayCommand(action.command)}\n\n${action.destructive ? "Press y to confirm this exact command." : "Press y to run."}`;
-    ui.showPanel({ title: "Command preview", text, confirm: () => { void execute(action, action.destructive).catch(report); } });
+  const executeDomain = async (plan: ActionPlan) => {
+    const current = begin(plan.action.label);
+    const result = await store.runAction(plan, true, current.controller.signal);
+    const node = store.tree.nodes[plan.nodeId];
+    finish(plan.action.label, `${result.successful ? "Completed" : "Failed"}\n\n${result.text}\n\nObserved after refresh: ${node?.kind === "resource" ? node.status : node ? node.name : "target no longer discovered"}`);
   };
-  const report = (error: unknown) => { if (job) job.controller.abort(); job = undefined; ui.showPanel({ title: "Action unavailable", text: redact(String(error)) }); };
-  const refreshStopSnapshot = async () => {
-    await store.refreshResources(); await store.refreshSites();
-    return { resources: store.resources, sites: store.sites.data };
-  };
-  const stopProject = async (plan: StopPlan) => {
-    const current = begin(`Stop project ${plan.project}`);
-    const panel = ui.panel!;
-    const reports: string[] = [];
-    try {
-      const outcome = await executeProjectStop(plan, true, refreshStopSnapshot, store.runner, current.controller.signal, entry => {
-        reports.push(`Target: ${entry.target.action.target}\n${output(entry.target.action.command, entry.result)}`);
-        panel.text = `${reports.join("\n\n")}\n\nRevalidating remaining targets…`; ui.render();
-      });
-      await refreshStopSnapshot();
-      const observed = plan.targets.map(target => target.resources.map(id => {
-        const resource = store.resources.find(r => r.id === id);
-        const source = id.startsWith("container:") ? store.sources.Docker : id.startsWith("process:") ? store.sources.Processes : store.sources[id.startsWith("systemd:user:") ? "User services" : "System services"];
-        const replaced = id.startsWith("process:") && resource && resource.metadata.startTicks !== target.action.command.args.at(-3);
-        return `${id}: ${source?.state === "unavailable" ? "unavailable / stale" : replaced ? "original process exited; PID now reused" : resource ? resource.status : "no longer discovered"}`;
-      }).join("\n")).join("\n");
-      finish(`Project stop: ${plan.project}`, `${outcome.stopped}\n\n${reports.join("\n\n")}\n\nObserved after refresh:\n${observed}\n\nUnmanaged watchers can respawn servers. Configured routes remain configured.\n\nExcluded from original preview:\n${plan.skipped.map(s => `${s.name}: ${s.reason}`).join("\n") || "none"}`);
-    } catch (e) {
-      await refreshStopSnapshot().catch(() => {});
-      finish(`Project stop: ${plan.project}`, `${reports.join("\n\n")}\n\nStopped: ${redact(String(e))}. Remaining commands not executed.`);
-    }
-  };
-  const previewProjectStop = async (project: string) => {
-    if (ui.fixture) { ui.showPanel({ title: "Project stop · FIXTURE PREVIEW ONLY", text: formatStopPlan(planProjectStop(project, store.resources, store.sites.data)) }); return; }
-    const current = begin("Refreshing project-stop targets");
-    await refreshStopSnapshot();
-    if (current.controller.signal.aborted) { finish("Project stop preview", "Cancelled"); return; }
-    const plan = planProjectStop(project, store.resources, store.sites.data);
+  const previewDomain = async (nodeId: string, actionId: string) => {
+    const current = begin("Refreshing action target");
+    const plan = await store.previewAction(nodeId, actionId, current.controller.signal);
+    if (current.controller.signal.aborted) { finish("Action preview", "Cancelled"); return; }
     job = undefined;
-    ui.notice = "Project stop preview · nothing stopped yet";
-    ui.showPanel({ title: "Stop exclusive project services", text: formatStopPlan(plan) + (plan.targets.length ? "\n\nPress y to stop exactly these targets; Esc cancels." : "\n\nNo eligible targets. Assign Suggested resources with a, or inspect the exclusion reasons."),
-      ...(plan.targets.length ? { confirm: () => { void stopProject(plan).catch(report); } } : {}),
-    });
+    const execution = plan.action.execution;
+    const command = execution.type === "command" ? displayCommand(execution.command) : `${execution.provider} ${execution.operation}\n${JSON.stringify(execution.target, null, 2)}`;
+    ui.showPanel({ title: "Action preview", text: `Target: ${store.tree.nodes[nodeId]?.name ?? nodeId}\nScope: ${plan.action.description}\n\n${command}\n\nPress y to ${plan.action.confirm ? "confirm" : "run"}; Esc cancels.`, confirm: () => { void executeDomain(plan).catch(report); } });
+  };
+  const editText = (title: string, initial: string, save: (value: string) => Promise<unknown>) => {
+    if (ui.fixture) throw new Error("Fixture mode: configuration writes are disabled.");
+    let value = initial;
+    const render = () => ui.showPanel({ title, text: `${value}▏\n\nEnter saves · Esc cancels`, onKey: key => {
+      if (key.name === "escape") { ui.panel = undefined; ui.render(); return true; }
+      if (key.name === "return") {
+        const current = begin("Saving organization");
+        void save(value.trim()).then(() => finish(title, "Saved")).catch(report); return true;
+      }
+      if (key.name === "backspace") value = [...value].slice(0, -1).join("");
+      else if (!key.ctrl && !key.meta && key.sequence && !/[\x00-\x1f\x7f]/.test(key.sequence)) value += key.sequence;
+      render(); return true;
+    } });
+    render();
+  };
+  const move = (node: Node) => {
+    if (ui.fixture) throw new Error("Fixture mode: configuration writes are disabled.");
+    const groups = Object.values(store.tree.nodes).filter(n => n.kind === "group" && n.id !== node.id);
+    const choices = [...(node.kind === "group" ? [{ id: null, name: "Top level" }] : []), ...groups];
+    let index = Math.max(0, choices.findIndex(g => g.id === node.parent));
+    const render = () => ui.showPanel({ title: `Move ${node.name}`, text: "↑↓ select · y save · Esc cancel\n\n" + choices.map((g, i) => `${i === index ? ">" : " "} ${g.name} · ${g.id ?? "root"}`).join("\n"), confirm: () => {
+      begin("Saving organization"); void store.place(node.id, choices[index].id).then(() => finish("Move", "Saved")).catch(report);
+    }, onKey: key => {
+      if (key.name === "up") { index = Math.max(0, index - 1); render(); return true; }
+      if (key.name === "down") { index = Math.min(choices.length - 1, index + 1); render(); return true; }
+      return false;
+    } }); render();
   };
   const inspectDocker = async (cleanup = false) => {
     const current = begin("Docker storage inventory");
@@ -126,58 +108,37 @@ export function installInteractions(ui: Dashboard) {
     ] };
   };
   ui.onStorage = () => [...scans.values()].map(s => ({ id: `scan:${s.path}`, type: "folder", value: s.path, text: `${bytes(s.entries.find(e => e.path === s.path)?.bytes)} · ${s.state} · ${s.path} · ${new Date(s.at).toLocaleTimeString()}` }));
-  const assign = (target: Resource | Site) => {
-    if (ui.fixture) throw new Error("Fixture mode: configuration writes disabled.");
-    const projects = store.projects.data;
-    const picked = new Set(target.associations.filter(a => a.state !== "Suggested").map(a => a.project));
-    let index = 0;
-    const previousAction = ui.onAction;
-    const render = () => {
-      ui.showPanel({ title: `Assign ${target.id}`, text: "Use ↑↓ and Space to toggle projects; y saves the explicit mapping.\nAn empty selection explicitly leaves this resource unassigned. Esc cancels.\n\n" + projects.map((p, i) => `${i === index ? ">" : " "} [${picked.has(p.id) ? "x" : " "}] ${p.path}`).join("\n"), confirm: () => { restore(); void saveMapping(store.config, target.id, [...picked]).then(async () => { store.reassociate(); await store.refreshSites(); ui.showPanel({ title: "Mapping saved", text: `${target.id}\n${[...picked].join("\n") || "Explicitly unassigned"}` }); }).catch(report); }, cancel: () => restore() });
-    };
-    const key = (k: { name: string; defaultPrevented?: boolean }) => {
-      if (k.defaultPrevented) return;
-      if (k.name === "up") { index = Math.max(0, index - 1); render(); }
-      if (k.name === "down") { index = Math.min(projects.length - 1, index + 1); render(); }
-      if (k.name === "space" && projects[index]) { const id = projects[index].id; if (picked.has(id)) picked.delete(id); else picked.add(id); render(); }
-      if (["escape", "q"].includes(k.name)) restore();
-    };
-    const restore = () => { ui.renderer.keyInput.off("keypress", key); ui.onAction = previousAction; };
-    ui.renderer.keyInput.on("keypress", key); render();
-  };
   ui.onAction = (key: string, row: Row | undefined, screen: Screen) => {
     try {
-      const target = row?.type === "resource" || row?.type === "site" ? row.value as Resource | Site : screen.detail && "associations" in screen.detail ? screen.detail : undefined;
+      const node: Node | undefined = row?.type === "node" || row?.type === "group" ? row.value : row?.type === "action" ? store.tree.nodes[row.value.nodeId] : screen.detail && "actions" in screen.detail ? screen.detail : undefined;
       if (key === "c") { job?.controller.abort(); return; }
       if (key === "z" && lastOutput) { ui.showPanel(lastOutput); return; }
-      if (key === "v") { ui.showPanel({ title: screen.title, text: target ? JSON.stringify(target, null, 2) : screen.rows.map(r => r.text).join("\n") }); return; }
+      if (key === "v") { ui.showPanel({ title: screen.title, text: node ? JSON.stringify(node, null, 2) : screen.rows.map(r => r.text).join("\n") }); return; }
       if (job) throw new Error(`Already running: ${job.title}. Press c to cancel.`);
-      if (key === "stop-project" || (key === "return" && row?.type === "project-stop")) {
-        const project = screen.detail && "worktrees" in screen.detail ? screen.detail : ["project", "project-stop"].includes(row?.type ?? "") ? row?.value : undefined;
-        if (project) void previewProjectStop(project.id).catch(report);
-        return;
+      if (key === "return" && row?.type === "action") { if (ui.fixture) throw new Error("Fixture mode: actions disabled."); void previewDomain(row.value.nodeId, row.value.actionId).catch(report); return; }
+      if (key === "g" && ui.section === 1) {
+        const parent = screen.detail && "actions" in screen.detail && screen.detail.kind === "group" ? screen.detail.id : null;
+        editText("New group", "", name => { if (!name) throw new Error("Group name is required"); return store.createGroup(name, parent); }); return;
+      }
+      if (node) {
+        if (["m", "a"].includes(key)) { move(node); return; }
+        if (key === "n") { editText("Rename", node.name, name => { if (!name) throw new Error("Name is required"); return store.place(node.id, node.parent, name); }); return; }
+        if (key === "labels") { editText("Labels (comma separated)", node.labels.join(", "), value => store.place(node.id, node.parent, undefined, value.split(",").map(s => s.trim()).filter(Boolean))); return; }
+        if (key === "actions") {
+          let index = 0;
+          const render = () => ui.showPanel({ title: `Actions · ${node.name}`, text: node.actions.length ? "↑↓ select · Enter previews · Esc closes\n\n" + node.actions.map((a, i) => `${i === index ? ">" : " "} ${a.label}: ${a.description}`).join("\n") : "No actions defined. Add actions in the configuration.", onKey: event => {
+            if (event.name === "up") { index = Math.max(0, index - 1); render(); return true; }
+            if (event.name === "down") { index = Math.min(node.actions.length - 1, index + 1); render(); return true; }
+            if (event.name === "return" && node.actions[index]) { if (ui.fixture) { report(new Error("Fixture mode: actions disabled.")); return true; } void previewDomain(node.id, node.actions[index].id).catch(report); return true; }
+            return false;
+          } }); render(); return;
+        }
+        const names: Record<string, string> = { s: "start", x: "stop", t: "restart", l: "logs", o: "open", h: node.actions.some(a => a.id === "check") ? "check" : "verify" };
+        if (names[key]) { if (ui.fixture) throw new Error("Fixture mode: actions disabled."); void previewDomain(node.id, names[key]).catch(report); return; }
       }
       if (key === "b" && ui.section === 3) { void inspectDocker(true).catch(report); return; }
       if (key === "return" && row?.type === "docker-storage") { void inspectDocker().catch(report); return; }
-      if (key === "s") { const path = screen.folder ?? (row?.type === "folder" ? row.value : screen.detail && "worktrees" in screen.detail ? screen.detail.path : undefined); if (path) void scan(path).catch(report); return; }
-      if (key === "a" && target) { assign(target); return; }
-      if (target && "kind" in target && ["l", "x", "t"].includes(key)) {
-        if (target.metadata.collectionState === "unavailable") throw new Error("Collector unavailable; this resource is stale. Refresh before acting.");
-        prepare(resourceAction(target, key === "l" ? "logs" : key === "x" ? "stop" : "restart")); return;
-      }
-      if (target && "url" in target) {
-        if (key === "o") prepare(openAction(target));
-        if (key === "h") {
-          const site = target; const current = begin(`HTTP ${site.url}`); const command = httpCommand(site);
-          ui.panel!.text = `${displayCommand(command)}\n\nOne HEAD request; redirects are not followed. Checking…`; ui.render();
-          void store.runner(command, current.controller.signal).then(result => {
-            const status = Number(result.stdout.trim());
-            const check = { at: Date.now(), status: result.code === 0 && status >= 100 && status <= 599 ? status : undefined, error: result.code === 0 && status >= 100 ? undefined : redact(result.problem ?? result.stderr ?? "HTTP unavailable") };
-            site.check = check; const live = store.sites.data.find(s => s.id === site.id); if (live) live.check = check;
-            finish(`HTTP ${site.url}`, output(command, result) + "\n\nHTTP response and backend state are independent. Redirects and authentication responses are reported without being classified as failures. HEAD 405/501 may mean this method is unsupported.");
-          }).catch(report);
-        }
-      }
-    } catch (e) { ui.showPanel({ title: "Action unavailable", text: redact(String(e)) }); }
+      if (key === "s") { const path = screen.folder ?? (row?.type === "folder" ? row.value : undefined); if (path) void scan(path).catch(report); }
+    } catch (error) { report(error); }
   };
 }

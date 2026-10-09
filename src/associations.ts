@@ -6,7 +6,7 @@ export function associate(resources: Resource[], projects: Project[], config: Co
   const output = resources.map(resource => {
     const associations: Association[] = [];
     const override = config.mappings.find(m => m.resource === resource.id);
-    if (override) for (const project of override.projects) associations.push({ project, state: "Assigned", reason: "Explicit configuration override" });
+    if (override) for (const project of override.projects) associations.push({ ...override.relationships?.find(r => r.project === project), project, state: "Assigned", reason: "Explicit configuration override" });
     else for (const project of projects) {
       const path = resource.paths.find(path => [project.path, ...project.worktrees].some(root => within(path, root)));
       if (path) associations.push({ project: project.id, state: "Detected", reason: `Working directory / Git worktree: ${path}` });

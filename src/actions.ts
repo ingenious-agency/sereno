@@ -2,7 +2,7 @@ import type { Resource, Site } from "./model.ts";
 import { safeUrl, type Command, type Runner, type Result } from "./runner.ts";
 
 export interface Action { target: string; scope: string; command: Command; destructive: boolean; refresh: "resources" | "storage" | "none"; resourceId?: string; verb?: string }
-export function resourceAction(resource: Resource, verb: "logs" | "stop" | "restart"): Action {
+export function resourceAction(resource: Resource, verb: "logs" | "stop" | "restart" | "start"): Action {
   const owner = resource.owner;
   if (!owner) throw new Error("No supported lifecycle owner. Inspect related resources; arbitrary process signals are not supported.");
   const logs = verb === "logs";

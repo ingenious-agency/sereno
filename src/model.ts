@@ -1,7 +1,9 @@
 export type Health = "loading" | "ready" | "empty" | "partial" | "unavailable" | "error";
 export interface Slice<T> { state: Health; data: T; at?: number; message?: string; refreshing?: boolean }
 export interface Project { id: string; name: string; path: string; worktrees: string[]; git: string }
-export interface Association { project: string; state: "Detected" | "Suggested" | "Assigned"; reason: string }
+export type RelationshipRole = "workload" | "dependency" | "tooling";
+export interface Relationship { project: string; role?: RelationshipRole; purpose?: string }
+export interface Association extends Relationship { state: "Detected" | "Suggested" | "Assigned"; reason: string }
 export interface Owner {
   kind: "docker" | "compose" | "systemd" | "process";
   id: string; user?: boolean; project?: string; service?: string; directory?: string; files?: string[];
@@ -28,9 +30,11 @@ export interface Overview {
   temperatures: string[];
 }
 export interface Config {
+  organization?: import("./domain.ts").Organization;
+  encargado?: { enabled?: boolean; socket?: string };
   explain?: { provider: "codex" | "ollama"; model?: string };
   projectRoots: string[];
-  mappings: { resource: string; projects: string[] }[];
+  mappings: { resource: string; projects: string[]; relationships?: Relationship[] }[];
   sites: { url: string; scope?: Scope; backend?: string; projects?: string[] }[];
 }
 export interface Scan { path: string; at: number; state: Health; entries: { path: string; bytes: number }[]; message: string }

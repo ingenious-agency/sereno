@@ -3,9 +3,9 @@
 [![CI](https://github.com/ingenious-agency/sereno/actions/workflows/ci.yml/badge.svg)](https://github.com/ingenious-agency/sereno/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Sereno is a terminal dashboard for your Linux home server. See what's running, which project it belongs to, how your sites are routed, and where your disk space is going—all without switching between a dozen commands.
+Sereno is a terminal interface for Encargado and the other resources on your Linux home server. Browse projects, worktrees, websites, infrastructure, and custom resources in one tree of nested groups. Organize them with names and labels, and run their available actions from the same interface.
 
-Built with [OpenTUI](https://github.com/anomalyco/opentui) and TypeScript. It uses the tools already on your machine: Docker, Compose, systemd, Tailscale, Kamal proxy, and standard Linux utilities. There's no background daemon or separate monitoring service to set up.
+Built with [OpenTUI](https://github.com/anomalyco/opentui) and TypeScript. It uses the tools already on your machine: Docker, Compose, systemd, Tailscale, Kamal proxy, and standard Linux utilities. Host discovery works on its own. When Encargado is available, Sereno imports its registered environments and controls them through its Unix-socket API.
 
 ## Getting started
 
@@ -49,23 +49,27 @@ The launcher includes the experimental FFI flag required by OpenTUI. Run Sereno 
 
 Host information, CPU usage and load averages, memory, swap, temperatures, filesystem space, running containers, and failed systemd services. Current CPU usage and load averages are shown separately—they mean different things.
 
-### Projects
+### Groups
 
-Sereno discovers directories under `~/Work/Projects`, including Git worktrees outside that directory. Each project brings together its containers, services, processes, listening ports, and sites.
+Everything is a group or a resource. Groups can contain other groups and resources; each item has one primary location. Projects, worktrees, and environments use this same model.
 
-Resources have three kinds of association:
+Encargado automatically supplies project → checkout groups, registered services, URLs, and actions. Project-scoped services appear once under Shared services, with their consumers listed in the inspector. Stopped services and their URLs remain visible. Process state, readiness, desired state, and routing errors are shown separately.
 
-- **Detected:** backed by metadata, such as a Compose working directory or a process's current directory.
-- **Suggested:** a possible match, usually based on a name. It needs your confirmation.
-- **Assigned:** a mapping you've made yourself.
+Local discovery finds project folders under `~/Work/Projects`, Git worktrees, Docker containers, systemd units, processes, listeners, and routes. Recognized owners receive Start, Stop, Restart, and Logs actions. Unknown resource types have no inferred lifecycle actions. Shared resources appear in Shared infrastructure; other resources without a location appear in Ungrouped.
 
-Press `a` to assign a resource to one or more projects. Shared and unmatched resources stay visible under **Shared infrastructure / Unassigned**.
+Runtime observations with exact systemd or Compose ownership are attached to the corresponding Encargado resource. Managed lifecycle actions call Encargado. Resource names and port numbers alone never establish managed ownership.
+
+Press `g` to create a group, `m` to move an item, `n` to rename it, or Shift+L to edit comma-separated labels. Enter opens nested groups and resource details. Saved names, labels, and locations survive discovery refreshes. Removing a group from configuration leaves its resources in Ungrouped.
+
+An unavailable integration keeps its last inventory visible for the current session and disables its actions. Sereno's host discovery continues independently. Integration inventory is refreshed every 30 seconds; `r` refreshes it immediately.
 
 ### Sites
 
-Routes from Tailscale Serve, Funnel, Services, and Kamal proxy, with their access scope, proxy chain, and backend. You can add sites manually too.
+Sites is a filtered view of the website resources in the same tree. Encargado's registered URLs appear alongside Tailscale, Funnel, Kamal, manual routes, and configured website resources.
 
-Route configuration, backend availability, and HTTP responses are separate. A configured route doesn't mean the backend is alive. Press `h` for a single HTTP HEAD check or `o` to open the site in your browser. Redirects and authentication responses aren't automatically treated as failures.
+A registered URL, a listening backend, and a successful HTTP response are separate facts. A stopped Encargado application can still have a persistent URL serving its Start page. That URL stays grouped with its application.
+
+Press `o` to open a website. Host and configured websites offer `h` for a single HTTP HEAD check; Encargado URLs offer its Verify operation. Redirects and authentication responses are reported as received. Actions and their output are available in the resource inspector.
 
 ### Storage
 
@@ -87,10 +91,10 @@ Folder totals aren't the same as physical disk usage, especially with Btrfs comp
 | `?` | Show shortcuts |
 | `r` | Refresh |
 | `v` | Show full details |
-| `a` | Assign a resource to projects |
+| `g` / `m` / `n` / Shift+L | Create group / move / rename / edit labels |
 | `l` | View recent logs |
-| `x` / `t` | Stop / restart a resource |
-| Shift+X | Preview stopping a project's services |
+| `s` / `x` / `t` | Start / stop / restart when available |
+| Shift+A | Open the selected item's action menu |
 | `o` / `h` | Open a site / check its HTTP response |
 | `s` / `c` | Scan a folder / cancel a running command |
 | `b` in Storage | Preview Docker build-cache cleanup |
@@ -100,19 +104,19 @@ Folder totals aren't the same as physical disk usage, especially with Btrfs comp
 
 On wider terminals, the inspector shows details alongside your selection. On smaller terminals, use Enter or `v` for the full view.
 
-## Stopping services
+## Actions
 
-Sereno shows the target, command, and scope before stopping or restarting anything. Press `y` to confirm or Escape to cancel. Results include stdout, stderr, the exit status, and the state observed after refreshing.
+Resources and groups expose actions supplied by their integration or defined in configuration. Open an item to see its action rows, or press Shift+A for the action menu. Start (`s`), Stop (`x`), Restart (`t`), Logs (`l`), Open (`o`), and Check/Verify (`h`) shortcuts appear when available.
 
-Compose services are controlled through Compose, systemd services through systemd, and standalone containers through Docker. Compose actions select existing containers by project/service labels, so they still work if the original worktree or Compose files have been deleted. Stopping a Compose service affects all its replicas.
+Every action shows its target and execution before running. Press `y` to run or Escape to cancel. Sereno refreshes the target and rechecks the action after confirmation. Changed actions, disappeared resources, or unavailable information require another preview. Command output includes stdout, stderr, exit status, and the state observed after refresh.
 
-To stop a project's services, open the project and press **Shift+X**. The preview includes only confirmed resources belonging exclusively to that project. Shared resources, uncertain matches, stale data, and infrastructure such as the Kamal proxy, Tailscale, and registry are excluded. Every exclusion has a reason.
+Group actions are explicit. An Encargado checkout's Start calls `up` and its Stop calls `stop`. Encargado handles dependency ordering, shared-service protections, readiness, and routing. A manual group controls resources only through an action configured for that group; placing a resource inside it does not create a lifecycle operation.
 
-Kamal app and database containers can be included once their association is confirmed. The shared proxy and routes stay configured. Development servers can be stopped with SIGTERM when Sereno can verify that they're same-user, unmanaged listening processes. This requires Python 3 and Linux pidfd support. Servers inside shared editor or service process trees may need to be stopped in their original terminal instead.
+Host actions control the identified systemd unit, Compose service, or standalone container. Compose actions affect all replicas of that service and operate on existing containers without loading deleted worktree files. Sereno does not infer launch recipes for unmanaged processes. Define a resource with explicit commands to control a custom application.
 
-The project plan is checked again before each command. A failure, changed target, or cancellation stops the rest of the batch. Completed actions aren't rolled back, and a parent watcher may respawn a development server.
+Press `c` to cancel a command or disconnect an API request. Disconnecting from Encargado does not cancel its server-side lifecycle operation; refresh its state before retrying. Actions never remove containers, volumes, files, or routes automatically.
 
-Nothing in a project stop removes containers, volumes, files, or routes.
+The old project stop/resume set is not used by the group interface. Encargado Start uses its declared recipes; custom Start uses its configured command.
 
 ## Cleanup
 
@@ -154,31 +158,82 @@ Explanations use a bounded snapshot of the selected item and related dashboard d
 
 ## Configuration
 
-Configuration lives in `~/.config/sereno/config.json`. Set `SERENO_CONFIG` to use a different file. Without a config, Sereno looks in `~/Work/Projects`.
+Configuration lives in `~/.config/sereno/config.json`. Set `SERENO_CONFIG` to use a different file. Interactive organization changes are saved atomically; edits made outside Sereno take effect on the next launch.
+
+`organization` contains group definitions, custom resource definitions, and overrides for imported items. Provider inventory and live status are never written into this configuration.
 
 ```json
 {
   "projectRoots": ["~/Work/Projects"],
-  "mappings": [
-    {
-      "resource": "systemd:user:my-app.service",
-      "projects": ["~/Work/Projects/my-app"]
-    }
-  ],
-  "sites": [
-    {
-      "url": "http://localhost:3000/",
-      "scope": "localhost",
-      "backend": "http://127.0.0.1:3000",
-      "projects": ["~/Work/Projects/my-app"]
-    }
-  ]
+  "encargado": { "enabled": true },
+  "organization": {
+    "version": 1,
+    "groups": [
+      { "id": "infra", "name": "Infrastructure" },
+      { "id": "databases", "name": "Databases", "parent": "infra" }
+    ],
+    "resources": [
+      {
+        "id": "docs",
+        "name": "Documentation",
+        "parent": "infra",
+        "type": "website",
+        "details": { "URL": "https://example.com/" }
+      },
+      {
+        "id": "worker",
+        "name": "Local worker",
+        "parent": "infra",
+        "actions": [
+          {
+            "id": "start",
+            "label": "Start",
+            "execution": {
+              "type": "command",
+              "command": {
+                "file": "./bin/worker-start",
+                "args": [],
+                "cwd": "/home/user/Work/Projects/my-app"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "placements": [
+      {
+        "resource": "compose:my-app:postgres",
+        "group": "databases",
+        "name": "Application database",
+        "labels": ["local"]
+      }
+    ]
+  }
 }
 ```
 
-Use `v` to find a resource's ID. A mapping replaces the inferred associations; an empty `projects` list leaves the resource explicitly unassigned. Container mappings use full IDs, so they need updating after a container is recreated. Interactive assignments are saved immediately; other config edits take effect on the next launch.
+Groups and resources require unique `id` and `name` fields. Optional `parent` selects a group; top-level groups omit it. Resources with a missing parent appear in Ungrouped. Optional `labels`, `description`, `details`, and `actions` apply to both. Nest groups to represent any environment or collection; cycles are rejected.
 
-See [config.example.json](config.example.json) for another example.
+Use `v` to inspect an imported item's stable ID. Placements can override its `group`, `name`, `labels`, and `actions`. A placement with `group: null` moves a resource to Ungrouped or a group to the top level. Omitted override fields retain the imported values; an explicit `actions: []` removes actions. Unresolved placements are retained for later discovery.
+
+Encargado IDs are opaque and survive runtime recreation. Host Compose IDs use `compose:<project>:<service>`; systemd IDs use `systemd:user:<unit>` or `systemd:system:<unit>`. Standalone containers retain their immutable container IDs. Processes use their PID plus observed start identity, so PID reuse cannot inherit a saved organization override. Moving an Encargado repository or worktree requires explicit reconciliation in Encargado.
+
+Custom command actions require `id`, `label`, and `execution`. `description` is optional. `confirm` defaults to true. Commands use `file` and an argument array, with optional absolute `cwd`, `timeout` in milliseconds, `limit` in bytes, `stdin`, and `env`. Arguments are passed directly to the executable. To run a shell script, point `file` at the script or explicitly configure a shell executable. Reference private environment files in your scripts rather than putting secrets in this configuration.
+
+Custom resources can supply `probe` using the same command format. Probes run during refresh, so use a bounded, read-only status command. Its stdout becomes the resource's status. A nonzero exit can report a stopped or failed state while keeping Start available; a missing command, cancellation, timeout, or truncated output makes observation unavailable. A resource without a probe displays unknown status. Website resources with `details.URL` receive Open and Check HTTP actions automatically when no actions are supplied.
+
+Encargado connection resolution supports `encargado.socket`, `ENCARGADO_SOCKET`, `ENCARGADO_HOME`, and its standard XDG runtime location. Set `encargado.enabled: false` to disable the integration. Sereno reads the public API, not the registry's private launch environments.
+
+Existing `projectRoots`, `mappings`, and `sites` configurations continue to load. Legacy assignments seed the initial host grouping; many-project assignments go into Shared infrastructure. New interactive edits use placements. Configured organization takes precedence over detected placement.
+
+An agent can write the same configuration you edit manually. Export the organization JSON Schema and validate the complete configuration before opening the TUI:
+
+```sh
+sereno --organization-schema
+SERENO_CONFIG=/path/to/config.json sereno --validate-config
+```
+
+Validation does not discover resources, run probes, or execute actions. See [config.example.json](config.example.json) for a nested organization with custom Start, Stop, and status commands.
 
 ## Limitations
 
@@ -197,7 +252,7 @@ npm run check      # TypeScript checks
 npm test
 ```
 
-The app is organized around collectors, a normalized resource model, OpenTUI views, and a bounded command runner. Metrics refresh frequently; discovery runs less often; directory scans happen on demand. Tests cover parsing, associations, navigation, and action targeting. Lifecycle tests use mocked execution.
+`src/domain.ts` defines groups, resources, actions, tree reconciliation, and action planning. `src/application.ts` owns refresh, organization persistence, and execution policy through Effect v4 services and injected layers. Providers translate external systems into the domain; OpenTUI reads the resulting tree through the store facade. The existing bounded runner handles command execution. Metrics refresh frequently; discovery runs less often; directory scans happen on demand. Tests cover parsing, associations, navigation, and action targeting. Lifecycle tests use mocked execution.
 
 To build a release tarball without publishing to npm:
 

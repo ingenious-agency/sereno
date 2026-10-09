@@ -76,6 +76,6 @@ export function associateSites(sites: Site[], resources: Resource[], config: Con
     for (const r of backends) for (const a of r.associations) if (!associations.some(x => x.project === a.project)) associations.push({ ...a, reason: `Backend ${r.id}: ${a.reason}` });
     const override = config.mappings.find(m => m.resource === site.id);
     const availability = !site.backend ? site.availability : backends.some(r => r.kind === "listener") ? "listening (local socket observed)" : backends.some(r => r.kind === "container" && r.status === "running") ? "container running; listener unverified" : backends.some(r => r.kind === "container") ? "container not running" : "unknown / listener not observed";
-    return { ...site, availability, resourceIds: [...new Set([...site.resourceIds, ...backends.map(r => r.id)])], associations: override ? override.projects.map(project => ({ project, state: "Assigned" as const, reason: "Explicit configuration override" })) : associations };
+    return { ...site, availability, resourceIds: [...new Set([...site.resourceIds, ...backends.map(r => r.id)])], associations: override ? override.projects.map(project => ({ ...override.relationships?.find(r => r.project === project), project, state: "Assigned" as const, reason: "Explicit configuration override" })) : associations };
   });
 }

@@ -1,0 +1,9 @@
+export const inventory = () => ({ version: 1,
+  projects: [{ id: "p_app", name: "app", path: "/projects/app", gitCommonDir: "/projects/app/.git" }],
+  checkouts: [{ id: "w_main", projectId: "p_app", path: "/projects/app", services: { web: "s_main", db: "s_db" } }, { id: "w_fix", projectId: "p_app", path: "/worktrees/fix", services: { web: "s_fix", db: "s_db" } }],
+  services: [
+    { id: "s_main", projectId: "p_app", name: "web", cwd: "/projects/app", role: "workload", scope: "worktree", consumers: ["w_main"], dependencies: ["s_db"], ports: { http: 20000 }, owner: { kind: "systemd", user: true, unit: "encargado-s_main.service" }, desired: "stopped", observed: { state: "stopped", ready: false }, urls: [{ url: "http://127.0.0.1:17870/s/s_main", scope: "localhost", source: "encargado" }] },
+    { id: "s_fix", projectId: "p_app", name: "web", cwd: "/worktrees/fix", role: "workload", scope: "worktree", consumers: ["w_fix"], dependencies: ["s_db"], ports: { http: 20001 }, owner: { kind: "systemd", user: true, unit: "encargado-s_fix.service" }, desired: "running", observed: { state: "running", ready: false }, urls: [] },
+    { id: "s_db", projectId: "p_app", name: "db", cwd: "/projects/app", role: "dependency", scope: "project", consumers: ["w_main", "w_fix"], dependencies: [], ports: { database: 20002 }, owner: { kind: "compose", project: "encargado-p-app", service: "db" }, desired: "running", observed: { state: "running", ready: true }, urls: [] },
+  ],
+});

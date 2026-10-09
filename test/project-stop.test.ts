@@ -7,6 +7,9 @@ import { run, type Command } from "../src/runner.ts";
 import { createTestRenderer } from "@opentui/core/testing";
 import { Dashboard } from "../src/ui.ts";
 import { installInteractions } from "../src/interactions.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const project = "/projects/alpha";
 function container(id: string, extras: Partial<Resource> = {}): Resource {
@@ -124,20 +127,17 @@ print("verified without sending any real signals")
   const result = await run({ file: "python3", args: ["-I", "-c", harness], stdin: terminateScript });
   assert.equal(result.code, 0, result.stderr); assert.match(result.stdout, /without sending any real signals/);
 });
-test("project UI Shift+X previews then executes only after y; all lifecycle execution mocked", async () => {
-  const setup = await createTestRenderer({ width: 110, height: 30 });
+test("groups have no implicit stop action even when their children are running", async () => {
+  const setup = await createTestRenderer({ width: 110, height: 30, kittyKeyboard: true });
   const store = fixtureStore(); let calls = 0;
-  store.refreshResources = async () => {};
-  store.refreshSites = async () => {};
-  store.runner = async command => { assert.ok(command.args.includes("stop")); calls++; store.resources[0].status = "exited"; return { stdout: "stopped", stderr: "", code: 0, duration: 1, truncated: false }; };
+  store.discoverHost = async () => {};
+  store.runner = async () => { calls++; throw new Error("must not execute"); };
   const ui = new Dashboard(setup.renderer, store); installInteractions(ui);
-  ui.section = 1; ui.stack = [{ type: "project", id: store.projects.data[0].id }]; ui.render();
+  ui.section = 1; ui.stack = [{ type: "group", id: `project:${store.projects.data[0].id}` }]; ui.render();
   try {
     setup.mockInput.pressKey("x", { shift: true });
-    await setup.waitFor(() => Boolean(ui.panel?.confirm));
-    assert.equal(calls, 0); assert.match(ui.panel!.text, /All replicas/);
-    setup.mockInput.pressKey("y");
-    await setup.waitFor(() => Boolean(ui.panel?.text.includes("Observed after refresh")));
-    assert.equal(calls, 1); assert.match(ui.panel!.text, /exited/);
+    for (let i = 0; i < 100 && ui.panel?.title !== "Action unavailable"; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.match(ui.panel!.text, /Action is not available/);
+    assert.equal(ui.panel?.confirm, undefined); assert.equal(calls, 0);
   } finally { ui.close(); }
 });

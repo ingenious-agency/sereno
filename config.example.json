@@ -1,22 +1,92 @@
 {
-  "explain": { "provider": "codex" },
-  "projectRoots": ["~/Work/Projects"],
-  "mappings": [
-    {
-      "resource": "systemd:user:example-web.service",
-      "projects": ["~/Work/Projects/example"]
-    },
-    {
-      "resource": "container:REPLACE_WITH_FULL_CONTAINER_ID",
-      "projects": ["~/Work/Projects/example", "~/Work/Projects/another-project"]
-    }
+  "projectRoots": [
+    "~/Work/Projects"
   ],
-  "sites": [
-    {
-      "url": "http://localhost:3000/",
-      "scope": "localhost",
-      "backend": "http://127.0.0.1:3000",
-      "projects": ["~/Work/Projects/example"]
-    }
-  ]
+  "encargado": {
+    "enabled": true
+  },
+  "explain": {
+    "provider": "codex"
+  },
+  "organization": {
+    "version": 1,
+    "groups": [
+      {
+        "id": "infrastructure",
+        "name": "Infrastructure"
+      },
+      {
+        "id": "databases",
+        "name": "Databases",
+        "parent": "infrastructure"
+      },
+      {
+        "id": "experiments",
+        "name": "Experiments",
+        "labels": [
+          "dev"
+        ]
+      }
+    ],
+    "resources": [
+      {
+        "id": "documentation",
+        "name": "Documentation",
+        "parent": "experiments",
+        "type": "website",
+        "details": {
+          "URL": "https://example.com/"
+        }
+      },
+      {
+        "id": "custom-worker",
+        "name": "Local worker",
+        "parent": "experiments",
+        "labels": [
+          "dev"
+        ],
+        "probe": {
+          "file": "./bin/worker-status",
+          "args": [],
+          "cwd": "/home/user/Work/Projects/my-app"
+        },
+        "actions": [
+          {
+            "id": "start",
+            "label": "Start",
+            "execution": {
+              "type": "command",
+              "command": {
+                "file": "./bin/worker-start",
+                "args": [],
+                "cwd": "/home/user/Work/Projects/my-app"
+              }
+            }
+          },
+          {
+            "id": "stop",
+            "label": "Stop",
+            "execution": {
+              "type": "command",
+              "command": {
+                "file": "./bin/worker-stop",
+                "args": [],
+                "cwd": "/home/user/Work/Projects/my-app"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "placements": [
+      {
+        "resource": "compose:my-app:postgres",
+        "group": "databases",
+        "name": "Application database",
+        "labels": [
+          "local"
+        ]
+      }
+    ]
+  }
 }

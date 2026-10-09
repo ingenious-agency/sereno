@@ -1,13 +1,14 @@
 import { BoxRenderable, StyledText, TextRenderable, bg, bold, createCliRenderer, fg, type CliRenderer, type KeyEvent, type TextChunk } from "@opentui/core";
 import { homedir } from "node:os";
-import { bytes, type Association, type Project, type Resource, type Site, type Slice } from "./model.ts";
+import { bytes, type Project, type Resource, type Site, type Slice } from "./model.ts";
 import { redact } from "./runner.ts";
 import type { Store } from "./store.ts";
+import { children, type Node, type Action as DomainAction } from "./domain.ts";
 
 type Line = TextChunk[];
-export interface Row { id: string; text: string; type: "project" | "resource" | "site" | "folder" | "text" | "docker-storage" | "project-stop"; value?: any; line?: Line; heading?: boolean }
-export interface Screen { title: string; status?: string; rows: Row[]; detail?: Resource | Site | Project; folder?: string }
-export interface Panel { title: string; text: string; confirm?: () => void; cancel?: () => void }
+export interface Row { id: string; text: string; type: "project" | "resource" | "site" | "folder" | "text" | "docker-storage" | "project-stop" | "project-start" | "group" | "node" | "action"; value?: any; line?: Line; heading?: boolean }
+export interface Screen { title: string; status?: string; rows: Row[]; detail?: Resource | Site | Project | Node; folder?: string }
+export interface Panel { title: string; text: string; confirm?: () => void; cancel?: () => void; onKey?: (key: KeyEvent) => boolean }
 interface Hint { key: string; label: string; name: string; context?: boolean }
 
 // Palette modelled on OpenCode's default dark theme.
@@ -17,7 +18,7 @@ export const theme = {
   primary: "#fab283", secondary: "#5c9cf5", accent: "#9d7cd8",
   success: "#7fd88f", warning: "#f5a742", error: "#e06c75", info: "#56b6c2",
 };
-const sections = ["Overview", "Projects", "Sites", "Storage"];
+const sections = ["Overview", "Groups", "Sites", "Storage"];
 
 const c = (color: string, text: string | number) => fg(color)(String(text));
 const b = (color: string, text: string | number) => bold(fg(color)(String(text)));
@@ -50,15 +51,6 @@ const glyphs: Record<Tone, string> = { success: "●", error: "✕", warning: "�
 const color = (t: Tone) => t === "muted" ? theme.muted : theme[t];
 /** Status is always glyph + words, never colour alone. */
 const badge = (status: string, cols = 0): Line => { const t = tone(status); return [c(color(t), glyphs[t] + " "), c(color(t), cols ? pad(status, cols) : status)]; };
-const httpTone = (s: Site): [string, string] => {
-  if (s.check?.status === undefined) return s.check?.error ? [theme.error, "HTTP error"] : [theme.muted, "not checked"];
-  const n = s.check.status;
-  return n < 300 ? [theme.success, `HTTP ${n}`] : n < 400 ? [theme.secondary, `HTTP ${n} redirect`] : n === 401 || n === 403 ? [theme.warning, `HTTP ${n} auth`] : [theme.error, `HTTP ${n}`];
-};
-const stateColor = (a: Association) => a.state === "Detected" ? theme.success : a.state === "Assigned" ? theme.secondary : theme.warning;
-const assocLine = (r: Resource | Site): Line => r.associations.length
-  ? r.associations.flatMap((a, i) => [...(i ? [c(theme.faint, ", ")] : []), c(stateColor(a), a.state[0]), c(theme.muted, ` ${a.project.split("/").at(-1)}`)])
-  : [c(theme.faint, "unassigned")];
 function gauge(used: number | undefined, total: number | undefined, cols: number): Line {
   if (used === undefined || !total) return [c(theme.faint, "·".repeat(cols)), c(theme.muted, "  unavailable")];
   const ratio = Math.max(0, Math.min(1, used / total)), filled = Math.round(ratio * cols);
@@ -76,16 +68,17 @@ const kv = (label: string, value: string | Line, valueColor = theme.text): Row =
   return text(`${label}: ${plain(v)}`, [c(theme.muted, pad(label, 14)), ...v]);
 };
 const lines = (t: string): Row[] => t.split("\n").map(line => text(line, [c(theme.muted, line)]));
-const resourceRow = (r: Resource): Row => ({ id: r.id, type: "resource", value: r, text: `${r.kind} ${r.name} [${r.status}] ${r.associations.map(a => `${a.state}: ${a.project.split("/").at(-1)}`).join(", ") || "Unassigned"}`,
-  line: [...badge(r.status, 13), c(theme.muted, pad(r.kind, 10)), c(theme.text, pad(r.name, 30)), ...assocLine(r)] });
-const siteRow = (s: Site): Row => { const [hc, ht] = httpTone(s); return { id: s.id, type: "site", value: s, text: `${s.url} [${s.scope}] ${s.availability} ${ht}`,
-  line: [...badge(s.availability.split(";")[0], 19), c(theme.secondary, pad(s.url.replace(/^https?:\/\//, ""), 34)), c(theme.accent, pad(s.scope, 9)), c(hc, ht)] }; };
 const folderRow = (path: string, label?: Line): Row => ({ id: path, type: "folder", value: path, text: path, line: [c(theme.primary, "▸ "), ...(label ?? [c(theme.text, path.replace(homedir(), "~"))])] });
+
+const nodeRow = (node: Node): Row => ({ id: node.id, type: node.kind === "group" ? "group" : "node", value: node,
+  text: `${node.name} ${node.kind === "resource" ? node.status : "group"} ${node.labels.join(" ")} ${Object.values(node.details).join(" ")}`,
+  line: [c(node.kind === "group" ? theme.primary : theme.secondary, node.kind === "group" ? "▸ " : "◆ "), b(theme.text, pad(node.name, 30)), ...(node.kind === "resource" ? badge(node.status, 24) : [c(theme.muted, "group")]), ...(node.kind === "resource" && node.details.HTTP ? [c(theme.info, ` HTTP ${node.details.HTTP}`)] : []), c(theme.accent, node.labels.length ? `  ${node.labels.join(", ")}` : "")] });
+const actionRow = (nodeId: string, action: DomainAction): Row => ({ id: `action:${nodeId}:${action.id}`, type: "action", value: { nodeId, actionId: action.id }, text: `${action.label} · ${action.description}`, line: [c(theme.primary, "▶ "), c(theme.text, action.label), c(theme.muted, "  ⏎ preview")] });
 
 export class Dashboard {
   store: Store; renderer: CliRenderer; fixture: boolean;
   section = 0; selected = 0; filter = ""; searching = false;
-  stack: { type: "project" | "resource" | "site" | "folder"; id: string }[] = [];
+  stack: { type: "project" | "resource" | "site" | "folder" | "group" | "node"; id: string }[] = [];
   panel?: Panel; panelScroll = 0;
   explanation?: Panel; explanationScroll = 0;
   palette?: { query: string; index: number };
@@ -129,60 +122,24 @@ export class Dashboard {
   screen(): Screen {
     const { store } = this; const top = this.stack.at(-1);
     if (top?.type === "folder") return this.onFolder?.(top.id) ?? { title: top.id, folder: top.id, rows: lines("Folder scan not yet collected") };
-    if (top?.type === "resource") {
-      const r = store.resources.find(r => r.id === top.id);
-      if (!r) return { title: "Resource disappeared", rows: lines("Refresh discovery to see current resources.") };
-      const related = store.resources.filter(x => r.related.includes(x.id));
-      return { title: r.name, status: r.metadata.collectionState, detail: r, rows: [
-        head("Resource"), kv("ID", r.id, theme.muted), kv("Type", r.kind), kv("State", badge(r.status)),
-        kv("Owner", r.owner ? `${r.owner.kind}${r.owner.user ? " (user)" : ""} · ${r.owner.service ?? r.owner.id}` : "No supported lifecycle owner", r.owner ? theme.text : theme.muted),
-        kv("CPU", r.cpu ?? "unavailable", r.cpu ? theme.text : theme.muted), kv("Memory", r.memory ?? "unavailable", r.memory ? theme.text : theme.muted),
-        kv("Ports", r.ports.join(", ") || "none observed", r.ports.length ? theme.info : theme.muted),
-        blank(), head("Paths"), ...(r.paths.length ? r.paths.map(p => text(p, [c(theme.text, p)])) : lines("unavailable")),
-        blank(), head("Associations"), ...(r.associations.length ? r.associations.flatMap(a => [text(`${a.state} ${a.project}`, [b(stateColor(a), pad(a.state, 10)), c(theme.text, a.project)]), text(a.reason, [c(theme.muted, `          ${a.reason}`)])]) : lines("Unassigned · press a to assign")),
-        blank(), head("Metadata"), ...Object.entries(r.metadata).map(([k, v]) => kv(k, v, theme.muted)),
-        ...(related.length ? [blank(), head("Related resources"), ...related.map(resourceRow)] : []),
-      ] };
-    }
-    if (top?.type === "site") {
-      const s = store.sites.data.find(s => s.id === top.id);
-      if (!s) return { title: "Site disappeared", rows: lines("No longer in discovered configuration.") };
-      const [hc, ht] = httpTone(s);
-      return { title: s.url, detail: s, rows: [
-        head("Route"), kv("URL", s.url, theme.secondary), kv("Scope", s.scope, theme.accent), kv("Source", s.source),
-        kv("Configured", s.configured ? "yes (observed configuration)" : "unverified (manual entry)", s.configured ? theme.success : theme.warning),
-        blank(), head("Proxy chain"), text(s.chain.join(" → "), s.chain.flatMap((hop, i) => [...(i ? [c(theme.faint, "  →  ")] : []), c(theme.text, hop)])),
-        blank(), head("Backend"), kv("Address", s.backend ?? "none / unknown", s.backend ? theme.text : theme.muted), kv("Availability", badge(s.availability)),
-        blank(), head("HTTP check", "independent from route and backend"), kv("Response", ht, hc), kv("Last check", s.check ? new Date(s.check.at).toLocaleString() : "never", theme.muted),
-        ...(s.check?.error ? [kv("Error", s.check.error, theme.error)] : []),
-        blank(), head("Associations"), ...(s.associations.length ? s.associations.map(a => text(`${a.state} ${a.project}: ${a.reason}`, [b(stateColor(a), pad(a.state, 10)), c(theme.text, a.project.split("/").at(-1)!), c(theme.muted, `  ${a.reason}`)])) : lines("Unassigned · press a to assign")),
-        blank(), head("Linked resources"), ...store.resources.filter(r => s.resourceIds.includes(r.id)).map(resourceRow),
-      ] };
-    }
-    if (top?.type === "project") {
-      const project = store.projects.data.find(p => p.id === top.id);
-      const shared = top.id === "shared";
-      const resources = store.resources.filter(r => shared ? r.associations.filter(a => a.state !== "Suggested").length !== 1 : r.associations.some(a => a.project === top.id));
-      const sites = store.sites.data.filter(s => s.associations.some(a => a.project === top.id));
-      const scan = project && this.onStorage?.().find(row => row.value === project.path);
-      return { title: shared ? "Shared infrastructure / Unassigned" : project?.name ?? top.id, detail: project, rows: project ? [
-        head("Repository"), kv("Repository", project.path), kv("Git", project.git),
-        kv("Folder size", scan ? scan.text : "not scanned · s to scan on demand", scan ? theme.text : theme.muted),
-        { id: `stop:${project.id}`, type: "project-stop", value: project, text: "Stop exclusive project services · X / Enter previews exact targets", line: [c(theme.warning, "■ "), c(theme.text, "Stop exclusive project services"), c(theme.muted, "  X / ⏎ preview")] },
-        blank(), head("Worktrees", String(project.worktrees.length)), ...(project.worktrees.length ? project.worktrees.map(w => text(w, [c(theme.faint, "⎇ "), c(theme.text, w.replace(homedir(), "~"))])) : lines("none / unavailable")),
-        blank(), head("Storage"), folderRow(project.path, [c(theme.text, "Folder usage"), c(theme.muted, "  ⏎ drill down")]),
-        blank(), head("Sites", String(sites.length)), ...(sites.length ? sites.map(siteRow) : lines("No associated sites")),
-        blank(), head("Resources", `${resources.length} unique · suggestions included · shared resources are not summed`), ...(resources.length ? resources.map(resourceRow) : lines("No associated resources")),
-      ] : [
-        ...lines("Resources with no confirmed project or with multiple confirmed projects. Suggestions are not assignments."), blank(),
-        head("Resources", String(resources.length)), ...resources.map(resourceRow),
+    if (top && ["group", "node", "project", "resource", "site"].includes(top.type)) {
+      const id = top.type === "project" ? `project:${top.id}` : store.tree.nodes[top.id] ? top.id : Object.values(store.tree.nodes).find(n => n.aliases?.includes(top.id))?.id ?? top.id;
+      const node = store.tree.nodes[id];
+      if (!node) return { title: "Item unavailable", rows: lines("Refresh discovery to see the current tree.") };
+      return { title: node.name, detail: node, status: node.kind === "resource" ? node.status : undefined, rows: [
+        head(node.kind === "group" ? "Group" : "Resource"), kv("Name", node.name), kv("ID", node.id, theme.muted),
+        kv("Labels", node.labels.join(", ") || "none"), ...(node.description ? [kv("Description", node.description)] : []),
+        ...(node.kind === "resource" ? [kv("Type", node.type), kv("State", badge(node.status))] : []),
+        ...Object.entries(node.details).map(([key, value]) => kv(key, value)),
+        blank(), head("Actions"), ...(node.actions.length ? node.actions.map(a => actionRow(node.id, a)) : lines("No actions defined. Add actions in the configuration.")),
+        ...(node.kind === "group" ? [blank(), head("Contents"), ...children(store.tree, node.id).map(nodeRow)] : []),
       ] };
     }
     const w = this.contentWidth(), barW = Math.max(10, Math.min(36, w - 52));
     if (this.section === 0) {
       const o = store.overview.data, m = o?.memory;
-      const running = store.resources.filter(r => r.kind === "container" && r.status === "running");
-      const failed = store.resources.filter(r => r.kind === "service" && r.status.startsWith("failed"));
+      const running = Object.values(store.tree.nodes).filter(n => n.kind === "resource" && n.type === "container" && n.status === "running");
+      const failed = Object.values(store.tree.nodes).filter(n => n.kind === "resource" && n.type === "service" && n.status.startsWith("failed"));
       return { title: "Overview", status: sliceStatus(store.overview, 6000), rows: [
         head("System"), ...(o ? [
           kv("Host", [b(theme.text, o.hostname), c(theme.muted, `  ${o.os} · kernel ${o.kernel}`)]), kv("Uptime", duration(o.uptime)),
@@ -197,23 +154,20 @@ export class Dashboard {
         ] : lines("Loading host metrics…")),
         blank(), head("Filesystems", sliceStatus(store.disks)),
         ...store.disks.data.map(d => kv(d.source.split("/").at(-1)!, [...gauge(d.used, d.total, barW), c(theme.muted, `  ${bytes(d.used)} / ${bytes(d.total)} · ${bytes(d.available)} free · ${d.type}`)])),
-        blank(), head("Running containers", String(running.length)), ...(running.length ? running.map(resourceRow) : lines("None running or Docker unavailable")),
-        blank(), head("Failed services", String(failed.length)), ...(failed.length ? failed.map(resourceRow) : [text("none", [c(theme.success, "✓ "), c(theme.muted, "no failed units observed")])]),
+        blank(), head("Running containers", String(running.length)), ...(running.length ? running.map(nodeRow) : lines("None running or Docker unavailable")),
+        blank(), head("Failed services", String(failed.length)), ...(failed.length ? failed.map(nodeRow) : [text("none", [c(theme.success, "✓ "), c(theme.muted, "no failed units observed")])]),
         blank(), head("Collectors"), ...Object.entries(store.sources).map(([name, s]) => text(`${name}: ${sliceStatus(s)}`, [...badge(s.state + (s.refreshing ? " ↻" : ""), 14), c(theme.text, pad(name, 18)), c(theme.muted, `${s.data.length} items${s.at ? ` · ${new Date(s.at).toLocaleTimeString()}` : ""}${s.message ? ` · ${s.message.split("\n")[0]}` : ""}`)])),
       ] };
     }
-    if (this.section === 1) return { title: "Projects", status: sliceStatus(store.projects), rows: [
-      ...store.projects.data.map(p => {
-        const confirmed = store.resources.filter(r => r.associations.some(a => a.project === p.id && a.state !== "Suggested")).length;
-        const suggested = store.resources.filter(r => r.associations.some(a => a.project === p.id && a.state === "Suggested")).length;
-        return { id: p.id, type: "project" as const, value: p, text: `${p.name} ${p.path} · ${p.worktrees.length} worktrees · ${confirmed} confirmed resources`,
-          line: [c(theme.primary, "◆ "), b(theme.text, pad(p.name, 22)), c(theme.muted, pad(p.path.replace(homedir(), "~"), 34)), c(theme.info, `⎇ ${p.worktrees.length}`), c(theme.muted, "  "), c(theme.success, `● ${confirmed}`), c(theme.muted, " confirmed"), ...(suggested ? [c(theme.warning, `  ◐ ${suggested}`), c(theme.muted, " suggested")] : [])] };
-      }),
-      blank(),
-      { id: "shared", type: "project", text: "Shared infrastructure / Unassigned", line: [c(theme.muted, "◇ "), c(theme.text, "Shared infrastructure / Unassigned")] },
+    if (this.section === 1) return { title: "Groups", rows: [
+      ...children(store.tree, null).map(nodeRow), blank(), head("Integrations"),
+      ...store.tree.sources.map(source => kv(source.id, `${source.state}${source.message ? ` · ${source.message}` : ""}`)),
     ] };
-    if (this.section === 2) return { title: "Sites", status: sliceStatus(store.sites), rows: store.sites.data.length ? store.sites.data.map(siteRow) : lines("No sites discovered. Add manual sites in the config file.") };
-    const folders = [...store.projects.data.map(p => p.path), `${homedir()}/.cache`, `${homedir()}/.npm`, `${homedir()}/.bun/install/cache`, `${homedir()}/.local/share/mise`, "/var/cache/pacman/pkg"];
+    if (this.section === 2) {
+      const sites = Object.values(store.tree.nodes).filter(n => n.kind === "resource" && n.type === "website");
+      return { title: "Sites", rows: sites.length ? sites.map(nodeRow) : lines("No websites discovered. Add a website resource in the configuration.") };
+    }
+    const folders = [...new Set(Object.values(store.tree.nodes).filter(n => n.kind === "group").flatMap(n => [n.details.Repository, n.details.Path].filter((p): p is string => Boolean(p)))), `${homedir()}/.cache`, `${homedir()}/.npm`, `${homedir()}/.bun/install/cache`, `${homedir()}/.local/share/mise`, "/var/cache/pacman/pkg"];
     const scans = this.onStorage?.() ?? [];
     return { title: "Storage", status: sliceStatus(store.disks), rows: [
       head("Filesystems", "deduplicated by UUID · Btrfs chunks are not capacity"),
@@ -245,13 +199,17 @@ export class Dashboard {
     const target = row?.value ?? screen.detail;
     const h = (key: string, label: string, name = key): Hint => ({ key, label, name, context: true });
     const context: Hint[] = [];
-    if (row && ["project", "resource", "site", "folder"].includes(row.type)) context.push(h("⏎", "open", "return"));
+    if (row && ["group", "node", "project", "resource", "site", "folder"].includes(row.type)) context.push(h("⏎", "open", "return"));
+    if (row?.type === "action") context.push(h("⏎", "preview action", "return"));
     if (row?.type === "docker-storage") context.push(h("⏎", "inspect docker", "return"));
-    if (row?.type === "project-stop") context.push(h("⏎", "preview stop", "return"));
-    if ((screen.detail && "worktrees" in screen.detail) || (row?.type === "project" && row.value)) context.push(h("X", "stop project", "stop-project"));
-    if (target && typeof target === "object" && "url" in target) context.push(h("o", "open in browser"), h("h", "HTTP check"), h("a", "assign"));
-    else if (target && typeof target === "object" && "kind" in target) context.push(h("l", "logs"), h("x", "stop"), h("t", "restart"), h("a", "assign"));
-    if (this.section === 3 || screen.folder || row?.type === "folder" || (target && typeof target === "object" && "worktrees" in target)) context.push(h("s", "scan"), h("c", "cancel scan"));
+    if (target && typeof target === "object" && "source" in target && "actions" in target) {
+      const node = target as Node;
+      const keys: Record<string, string> = { start: "s", stop: "x", restart: "t", logs: "l", open: "o", check: "h", verify: "h" };
+      for (const action of node.actions) if (keys[action.id]) context.push(h(keys[action.id], action.label.toLowerCase()));
+      context.push(h("m", "move to group"), h("n", "rename"), h("L", "edit labels", "labels"), h("A", "all actions", "actions"));
+    }
+    if (this.section === 1) context.push(h("g", "new group"));
+    if (this.section === 3 || screen.folder || row?.type === "folder") context.push(h("s", "scan"), h("c", "cancel scan"));
     if (this.section === 3 && !this.stack.length) context.push(h("b", "build-cache cleanup"));
     context.unshift(h("e", "explain"));
     context.push(h("v", "raw details"), h("z", "last output"));
@@ -286,6 +244,7 @@ export class Dashboard {
   key(key: KeyEvent) {
     if (this.closed) return;
     if (key.ctrl && key.name === "c") { this.close(); return; }
+    if (!this.explanation && this.panel?.onKey?.(key)) { key.preventDefault?.(); this.render(); return; }
     if (this.palette) {
       const items = this.paletteItems();
       if (key.name === "escape") this.palette = undefined;
@@ -327,21 +286,24 @@ export class Dashboard {
     }
     if (key.ctrl && key.name === "p") { this.dispatch("palette"); return; }
     if (key.sequence === "?" || key.name === "?") { this.dispatch("help"); return; }
-    if (key.name === "escape") { if (this.filter) this.filter = ""; else this.stack.pop(); this.selected = 0; }
+    if (key.name === "escape") { if (this.filter) this.filter = ""; else this.stack.pop(); this.currentRows = []; this.selected = 0; }
     else if (key.name === "/") { this.searching = true; this.filter = ""; }
     else if (["1", "2", "3", "4", "tab", "left", "right"].includes(key.name)) {
       this.section = /^\d$/.test(key.name) ? Number(key.name) - 1 : (this.section + (key.name === "left" || key.shift ? 3 : 1)) % 4;
-      this.stack = []; this.selected = 0; this.filter = "";
+      this.stack = []; this.currentRows = []; this.selected = 0; this.filter = "";
     }
     else if (["up", "k", "pageup"].includes(key.name)) this.move(key.name === "pageup" ? -10 : -1);
     else if (["down", "j", "pagedown"].includes(key.name)) this.move(key.name === "pagedown" ? 10 : 1);
     else if (key.name === "home") { this.selected = 0; this.move(0); }
     else if (key.name === "end") { this.selected = this.currentRows.length - 1; this.move(0); }
     else if (key.name === "r") { if (!this.fixture) void this.store.refresh(); }
-    else if (key.name === "X" || (key.name === "x" && key.shift)) this.onAction?.("stop-project", this.currentRows[this.selected], this.screen());
+    else if (key.name === "X" || (key.name === "x" && key.shift)) this.onAction?.("x", this.currentRows[this.selected], this.screen());
+    else if (key.name === "S" || (key.name === "s" && key.shift)) this.onAction?.("s", this.currentRows[this.selected], this.screen());
+    else if (key.name === "L" || (key.name === "l" && key.shift)) this.onAction?.("labels", this.currentRows[this.selected], this.screen());
+    else if (key.name === "A" || (key.name === "a" && key.shift)) this.onAction?.("actions", this.currentRows[this.selected], this.screen());
     else if (key.name === "return") {
       const row = this.currentRows[this.selected];
-      if (row && ["project", "resource", "site", "folder"].includes(row.type)) { this.stack.push({ type: row.type as "project", id: row.type === "folder" ? row.value : row.id }); this.selected = 0; this.filter = ""; }
+      if (row && ["group", "node", "project", "resource", "site", "folder"].includes(row.type)) { this.stack.push({ type: row.type as "project", id: row.type === "folder" ? row.value : row.id }); this.currentRows = []; this.selected = 0; this.filter = ""; }
       else this.onAction?.(key.name, row, this.screen());
     } else this.onAction?.(key.name, this.currentRows[this.selected], this.screen());
     this.render();
@@ -386,7 +348,7 @@ export class Dashboard {
   }
   private renderList(screen: Screen) {
     const cols = this.contentWidth(), rows = Math.max(1, this.renderer.height - 6);
-    const crumbs = [sections[this.section], ...this.stack.map((s, i) => i === this.stack.length - 1 ? screen.title : s.type === "folder" ? s.id.split("/").at(-1) : this.store.projects.data.find(p => p.id === s.id)?.name ?? s.id.split(":").at(-1)!.slice(0, 16))];
+    const crumbs = [sections[this.section], ...this.stack.map((s, i) => i === this.stack.length - 1 ? screen.title : s.type === "folder" ? s.id.split("/").at(-1) : this.store.tree.nodes[s.id]?.name ?? this.store.projects.data.find(p => p.id === s.id)?.name ?? s.id.split(":").at(-1)!.slice(0, 16))];
     this.list.title = ` ${crumbs.join(" › ")} `;
     this.list.borderColor = this.panel || this.explanation || this.palette ? theme.border : theme.faint;
     const position = this.currentRows.length ? `${this.selected + 1}/${this.currentRows.length}` : "0";
@@ -411,32 +373,21 @@ export class Dashboard {
     const out: Line[] = [];
     const field = (label: string, value: string | Line, col = theme.text) => { out.push([c(theme.muted, label)]); out.push(typeof value === "string" ? [c(col, value)] : value); };
     const section = (t: string) => { out.push([]); out.push([b(theme.accent, t.toUpperCase())]); };
-    if (target && typeof target === "object" && "kind" in target) {
-      const r = target as Resource;
-      out.push([b(theme.text, r.name)]); out.push(badge(r.status));
-      field("Kind", r.kind); field("Owner", r.owner ? r.owner.kind : "none", r.owner ? theme.text : theme.muted);
-      if (r.ports.length) field("Ports", r.ports.join("\n"), theme.info);
-      field("CPU / Memory", `${r.cpu ?? "unavailable"} · ${r.memory ?? "unavailable"}`);
-      section("Associations"); r.associations.length ? r.associations.forEach(a => out.push([c(stateColor(a), `${a.state} `), c(theme.text, a.project.split("/").at(-1)!)])) : out.push([c(theme.muted, "Unassigned")]);
-    } else if (target && typeof target === "object" && "url" in target) {
-      const s = target as Site, [hc, ht] = httpTone(s);
-      out.push([b(theme.secondary, s.url)]); out.push(badge(s.availability));
-      field("Scope", s.scope, theme.accent); field("HTTP", ht, hc); field("Backend", s.backend ?? "unknown");
-      section("Chain"); s.chain.forEach((hop, i) => out.push([c(theme.faint, i ? "  ↳ " : "  "), c(theme.text, hop)]));
-      section("Associations"); s.associations.length ? s.associations.forEach(a => out.push([c(stateColor(a), `${a.state} `), c(theme.text, a.project.split("/").at(-1)!)])) : out.push([c(theme.muted, "Unassigned")]);
-    } else if (target && typeof target === "object" && "worktrees" in target) {
-      const p = target as Project;
-      const rs = this.store.resources.filter(r => r.associations.some(a => a.project === p.id));
-      out.push([b(theme.primary, p.name)]); field("Path", p.path.replace(homedir(), "~")); field("Git", p.git);
-      section(`Worktrees · ${p.worktrees.length}`); p.worktrees.forEach(w => out.push([c(theme.faint, "⎇ "), c(theme.text, w.replace(homedir(), "~"))]));
-      section(`Resources · ${rs.length}`); rs.slice(0, 12).forEach(r => out.push([...badge(r.status.split(" ")[0]), c(theme.text, ` ${r.name}`)]));
+    if (target && typeof target === "object" && "actions" in target && "source" in target) {
+      const node = target as Node;
+      out.push([b(theme.text, node.name)]);
+      if (node.kind === "resource") { out.push(badge(node.status)); field("Type", node.type); }
+      field("Labels", node.labels.join(", ") || "none");
+      for (const [key, value] of Object.entries(node.details).slice(0, 8)) field(key, value);
+      section("Actions"); node.actions.forEach(action => out.push([c(theme.primary, "▸ "), c(theme.text, action.label)]));
+      if (node.kind === "group") { section("Contents"); children(this.store.tree, node.id).slice(0, 10).forEach(child => out.push([c(theme.text, child.name)])); }
     } else if (typeof target === "string") {
       out.push([b(theme.text, target.split("/").at(-1) || target)]); field("Path", target.replace(homedir(), "~"));
       const scan = this.onStorage?.().find(r => r.value === target); field("Last scan", scan ? scan.text : "never · press s", scan ? theme.text : theme.muted);
     } else {
       out.push([b(theme.text, "Collectors")]);
       for (const [name, s] of Object.entries(this.store.sources)) { out.push([...badge(s.state), c(theme.text, `  ${name}`)]); }
-      section("Discovery"); for (const [name, s] of [["Projects", this.store.projects], ["Sites", this.store.sites], ["Filesystems", this.store.disks]] as const) out.push([...badge(s.state), c(theme.text, `  ${name}`)]);
+      section("Integrations"); for (const source of this.store.tree.sources) out.push([...badge(source.state), c(theme.text, `  ${source.id}`)]);
     }
     this.sideText.content = styled(out.map(line => line.map(chunk => ({ ...chunk, text: redact(chunk.text) }))));
   }

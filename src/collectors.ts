@@ -118,6 +118,7 @@ export async function collectServices(run: Runner, user: boolean, signal?: Abort
 }
 export async function collectProcesses(run: Runner, signal?: AbortSignal): Promise<{ resources: Resource[]; issues: string[] }> {
   const text = requireOutput(await run({ file: "ps", args: ["-eo", "pid=,pcpu=,rss=,comm="], limit: 2 * 1024 * 1024 }, signal));
+  const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8").catch(() => "")).trim();
   let hidden = 0;
   const resources = await mapLimit(text.trim().split("\n").filter(Boolean), 16, async line => {
     const match = line.trim().match(/^(\d+)\s+([\d.]+)\s+(\d+)\s+(.+)$/);
@@ -128,7 +129,7 @@ export async function collectProcesses(run: Runner, signal?: AbortSignal): Promi
     const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => "");
     const status = await readFile(`/proc/${pid}/status`, "utf8").catch(() => "");
     const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
-    return { id: `process:${pid}`, kind: "process", name: clean(match[4]), status: "running", paths: cwd ? [cwd] : [], ports: [], related: [], associations: [], pid, cpu: `${match[2]}% (lifetime average)`, memory: `${Number(match[3]) * 1024} bytes RSS`, metadata: { cgroup: cgroup.trim(), cwd: cwd ?? "unavailable (permissions or process exited)", startTicks: fields[19] ?? "", ppid: fields[1] ?? "", uid: status.match(/^Uid:\s+(\d+)/m)?.[1] ?? "" } } as Resource;
+    return { id: `process:${pid}`, kind: "process", name: clean(match[4]), status: "running", paths: cwd ? [cwd] : [], ports: [], related: [], associations: [], pid, cpu: `${match[2]}% (lifetime average)`, memory: `${Number(match[3]) * 1024} bytes RSS`, metadata: { cgroup: cgroup.trim(), cwd: cwd ?? "unavailable (permissions or process exited)", bootId, startTicks: fields[19] ?? "", ppid: fields[1] ?? "", uid: status.match(/^Uid:\s+(\d+)/m)?.[1] ?? "" } } as Resource;
   });
   return { resources: resources.filter((r): r is Resource => Boolean(r)), issues: hidden ? [`${hidden} process working directories unavailable (permissions, kernel threads, or exited processes).`] : [] };
 }

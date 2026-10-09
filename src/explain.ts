@@ -5,6 +5,8 @@ import type { Config, Resource, Site, Project } from "./model.ts";
 import { redact, requireOutput, type Command, type Runner } from "./runner.ts";
 import type { Store } from "./store.ts";
 import type { Dashboard, Panel, Row, Screen } from "./ui.ts";
+import { roleFor } from "./project-state.ts";
+import { children, type Node } from "./domain.ts";
 
 export const instructions = `Explain the selected item in Sereno, a local Linux server dashboard.
 Use only the supplied snapshot. Do not use tools, run commands, inspect files, follow links, or change anything.
@@ -14,6 +16,7 @@ What it is; What the readings mean; What to check next.
 Focus on the selected row and currently open dialog. Explain abbreviations and ownership.
 Distinguish observed facts from guesses and flag stale, partial or unavailable data.
 Detected means concrete metadata; Suggested is NOT confirmed; Assigned is a user override.
+Sereno organizes resources in nested groups. Names, labels and placement are organization, not proof of ownership or lifecycle. Group actions are explicitly defined; membership does not cause recursive start or stop. Encargado manages its registered services and supplies their roles, scope, desired state and readiness. A stopped service can retain a registered URL. Custom resources may have user-defined commands and status probes; unknown status is not proof that they are stopped.
 A configured route does not prove a live backend; HTTP redirects/auth responses are not automatically failures.
 CPU current utilization differs from load averages and process lifetime-average CPU.
 Shared process/container/cgroup measurements overlap. Btrfs chunks are not capacity;
@@ -22,20 +25,21 @@ Suggest only non-destructive next checks, never claim you ran them. Do not repro
 
 const MAX_CONTEXT = 24 * 1024;
 const bounded = (s: string, limit: number) => Buffer.byteLength(s) <= limit ? s : Buffer.from(s).subarray(0, limit - 64).toString("utf8") + "\n[Snapshot truncated; omitted data is unknown]";
-const resourceData = (r: Resource) => ({
+const resourceData = (r: Resource, all: Resource[] = []) => ({
   id: r.id, kind: r.kind, name: r.name, status: r.status, paths: r.paths, ports: r.ports,
-  owner: r.owner, cpu: r.cpu, memory: r.memory, associations: r.associations,
+  owner: r.owner, cpu: r.cpu, memory: r.memory, associations: r.associations.map(a => ({ ...a, role: roleFor(r, a.project, all), roleSource: a.role ? "assigned/inherited" : "automatic" })),
   metadata: Object.fromEntries(Object.entries(r.metadata).filter(([key]) => ["image", "service", "role", "destination", "scope", "collector", "collectionState", "collectedAt"].includes(key))),
 });
 export function explanationSnapshot(store: Store, row: Row | undefined, screen: Screen, panel?: Panel): string {
-  const target: Resource | Site | Project | undefined = ["resource", "site", "project"].includes(row?.type ?? "") ? row?.value ?? screen.detail : screen.detail;
+  const target: Resource | Site | Project | Node | undefined = ["node", "group", "resource", "site", "project"].includes(row?.type ?? "") ? row?.value ?? screen.detail : screen.detail;
   const ids = target && "related" in target ? target.related : target && "resourceIds" in target ? target.resourceIds : [];
-  const selected = target && "kind" in target ? resourceData(target) : target;
+  const selected = target && "actions" in target ? { id: target.id, name: target.name, kind: target.kind, parent: target.parent, labels: target.labels, description: target.description, details: target.details, actions: target.actions.map(a => ({ id: a.id, label: a.label, description: a.description })), ...(target.kind === "resource" ? { type: target.type, status: target.status, available: target.available } : { contents: children(store.tree, target.id).map(n => ({ id: n.id, name: n.name, kind: n.kind })) }) } : target && "kind" in target ? resourceData(target, store.resources) : target;
   const projectResources = target && "worktrees" in target ? store.resources.filter(r => r.associations.some(a => a.project === target.id)) : [];
   return bounded(JSON.stringify({
     capturedAt: new Date().toISOString(), view: screen.title, viewStatus: screen.status,
     selectedRow: row?.text, selected, folder: screen.folder ?? (row?.type === "folder" ? row.value : undefined),
-    relatedResources: [...store.resources.filter(r => ids.includes(r.id)), ...projectResources].slice(0, 12).map(resourceData),
+    relatedResources: [...store.resources.filter(r => ids.includes(r.id)), ...projectResources].slice(0, 12).map(r => resourceData(r, store.resources)),
+    ...(target && "worktrees" in target ? { projectState: (() => { const { status, running, stopped, coverage } = store.projectState(target.id); return { status, running, stopped, coverage }; })() } : {}),
     collectors: Object.fromEntries(Object.entries(store.sources).map(([name, s]) => [name, { state: s.state, at: s.at, refreshing: s.refreshing, message: s.message }])),
     ...(target ? {} : { overview: store.overview, filesystems: store.disks, visibleContext: screen.rows.slice(0, 24).map(r => r.text) }),
     ...(panel ? { dialog: { title: panel.title, text: bounded(panel.text, 6000) } } : {}),
