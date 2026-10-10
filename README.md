@@ -3,9 +3,15 @@
 [![CI](https://github.com/ingenious-agency/sereno/actions/workflows/ci.yml/badge.svg)](https://github.com/ingenious-agency/sereno/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Sereno is a terminal interface for Encargado and the other resources on your Linux home server. Browse projects, worktrees, websites, infrastructure, and custom resources in one tree of nested groups. Organize them with names and labels, and run their available actions from the same interface.
+Sereno is a terminal interface for [Encargado](https://github.com/ingenious-agency/encargado) and the other resources on your Linux home server. Browse projects, worktrees, websites, infrastructure, and custom resources in one tree of nested groups. Organize them with names and labels, and run their available actions from the same interface.
 
-Built with [OpenTUI](https://github.com/anomalyco/opentui) and TypeScript. It uses the tools already on your machine: Docker, Compose, systemd, Tailscale, Kamal proxy, and standard Linux utilities. Host discovery works on its own. When Encargado is available, Sereno imports its registered environments and controls them through its Unix-socket API.
+Built with [OpenTUI](https://github.com/anomalyco/opentui) and TypeScript. It uses the tools already on your machine: Docker, Compose, systemd, Tailscale, Kamal proxy, and standard Linux utilities.
+
+## Use Sereno with Encargado
+
+Encargado registers projects and worktrees and manages their services, dependencies, ports, and development URLs. Sereno imports those registered environments through Encargado's Unix-socket API and lets you inspect and operate them alongside the other resources on your machine. Managed lifecycle actions call Encargado, which handles dependency ordering, readiness, and shared-service protections.
+
+Start with [Encargado's application setup guide](https://github.com/ingenious-agency/encargado#register-and-run-an-application) to configure and register an environment, then open Sereno to browse its services and URLs. Encargado is optional: Sereno's host discovery and configured resources work independently.
 
 ## Getting started
 
