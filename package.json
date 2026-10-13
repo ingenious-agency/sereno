@@ -34,12 +34,12 @@
     "smoke": "node src/main.ts --snapshot"
   },
   "dependencies": {
-    "@opentui/core": "0.5.14",
+    "@opentui/core": "0.5.17",
     "effect": "4.0.2"
   },
   "devDependencies": {
-    "@types/node": "^26.0.0",
-    "prettier": "3.9.9",
+    "@types/node": "^26.6.5",
+    "prettier": "3.9.10",
     "typescript": "^5.9.3"
   }
 }
