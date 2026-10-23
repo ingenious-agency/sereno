@@ -12,6 +12,7 @@ import { run, type Command } from "../src/runner.ts";
 import { createTestRenderer } from "@opentui/core/testing";
 import { Dashboard } from "../src/ui.ts";
 import { installInteractions } from "../src/interactions.ts";
+import { parseListeners, linkResources } from "../src/collectors.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,6 +68,32 @@ function compose(id: string): Resource {
     },
   });
 }
+test("quoted listener names cannot give an unrelated process a project-stop target", () => {
+  const victim = { ...devServer(), ports: [] };
+  const owner = { ...devServer(), id: "process:900002", pid: 900002, ports: [] };
+  const listeners = parseListeners(
+    'LISTEN 0 128 127.0.0.1:8765 0.0.0.0:* users:(("pid=900001",pid=900002,fd=3))',
+  );
+  assert.deepEqual(listeners[0].related, [owner.id]);
+  const resources = linkResources([victim, owner, ...listeners]);
+  assert.deepEqual(victim.ports, []);
+  assert.deepEqual(
+    planProjectStop(project, resources).targets.map((t) => t.resources[0]),
+    [owner.id],
+  );
+});
+test("listener PID parsing respects escaped quotes, multiple owners and absent or incomplete names", () => {
+  const line = "LISTEN 0 128 [::1]:8765 [::]:* ";
+  assert.deepEqual(
+    parseListeners(
+      line +
+        String.raw`users:(("name\",pid=900001",pid=900002,fd=3),("other\\name",pid=900003,fd=4))`,
+    )[0].related,
+    ["process:900002", "process:900003"],
+  );
+  assert.deepEqual(parseListeners(line)[0].related, []);
+  assert.deepEqual(parseListeners(line + 'users:(("unfinished,pid=900001,fd=3))')[0].related, []);
+});
 test("project stop excludes shared, suggested, stale and infrastructure; retains confirmed Kamal app and DB", () => {
   const app = container("a");
   app.metadata.service = "alpha";

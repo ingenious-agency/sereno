@@ -425,7 +425,26 @@ export function parseListeners(text: string): Resource[] {
       const cols = line.trim().split(/\s+/);
       const address = cols[3];
       if (!address || !/:\d+$/.test(address)) throw new Error("Unrecognized ss listener output");
-      const pids = [...line.matchAll(/pid=(\d+)/g)].map((x) => Number(x[1]));
+      // Process names are quoted and may themselves contain PID-looking text.
+      // Mask quoted fields (including escaped quotes) before reading owner fields.
+      const start = line.indexOf("users:(");
+      const owners = start < 0 ? "" : line.slice(start + 7);
+      let outside = "",
+        quoted = false;
+      for (let i = 0; i < owners.length; i++) {
+        const c = owners[i];
+        if (quoted && c === "\\") {
+          i++;
+          continue;
+        }
+        if (c === '"') {
+          quoted = !quoted;
+          outside += " ";
+        } else if (!quoted) outside += c;
+      }
+      const pids = quoted
+        ? []
+        : [...new Set([...outside.matchAll(/,pid=(\d+)(?=[,)])/g)].map((x) => Number(x[1])))];
       return {
         id: `listener:${address}`,
         kind: "listener",
