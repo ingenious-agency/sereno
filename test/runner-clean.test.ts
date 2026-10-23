@@ -4,7 +4,10 @@ import { clean } from "../src/runner.ts";
 
 test("terminal sanitization handles first OSC terminators, incomplete sequences, CSI and ordinary text", () => {
   for (const terminator of ["\x07", "\x1b\\", "\x9c"]) {
-    assert.equal(clean(`before\x1b]title${terminator}middle\x1b]other${terminator}after`), "beforemiddleafter");
+    assert.equal(
+      clean(`before\x1b]title${terminator}middle\x1b]other${terminator}after`),
+      "beforemiddleafter",
+    );
   }
   assert.equal(clean("before\x1b]unterminated\x1b]payload"), "before");
   assert.equal(clean("a\x9dhidden\x9cb"), "ab");

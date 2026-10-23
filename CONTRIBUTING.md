@@ -4,11 +4,11 @@ Sereno is a dashboard for one local Linux machine. Bug fixes, clearer documentat
 
 ## Development
 
-Use Linux and Node.js 26.4 or newer:
+Use Linux, Node.js 26.4 or newer, and the pnpm version pinned in `package.json`:
 
 ```sh
-npm ci --ignore-scripts
-npm run fixtures
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run fixtures
 ```
 
 Fixture mode uses sample data and disables commands, configuration writes, and AI requests. Use it for public screenshots and reproductions. Live discovery output can contain private project names, hostnames, addresses, and paths; do not attach raw snapshots, local configuration, credentials, or live recordings to public reports.
@@ -16,10 +16,14 @@ Fixture mode uses sample data and disables commands, configuration writes, and A
 Before submitting a change:
 
 ```sh
-npm run check
-npm test
-npm run build
+pnpm run format
+pnpm run format:check
+pnpm run check
+pnpm test
+pnpm run build
 ```
+
+Prettier formats source, tests, configuration, workflows, and documentation. CI checks formatting without changing files. Commit dependency changes with `pnpm-lock.yaml`; use `pnpm add` or `pnpm remove` to update dependencies.
 
 Lifecycle tests use mocked execution. Add focused regression coverage for behavior changes; tests must not stop real services, prune storage, or call AI providers.
 
