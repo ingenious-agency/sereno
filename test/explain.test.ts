@@ -54,8 +54,14 @@ test("Codex uses stdin, ChatGPT authentication, isolated settings and read-only 
     "snapshot",
     "/tmp/example",
   );
-  assert.deepEqual(local.args, ["run", "qwen3:8b"]);
-  assert.equal(local.env?.OLLAMA_HOST, "127.0.0.1:11434");
+  assert.equal(local.file, "curl");
+  assert.equal(local.args.at(-1), "http://127.0.0.1:11434/api/generate");
+  assert.equal(local.args[0], "-q");
+  assert.ok(local.args.includes("--noproxy"));
+  assert.ok(!local.args.includes("--location"));
+  assert.ok(local.args.includes("--fail-with-body"));
+  assert.equal(JSON.parse(local.stdin!).model, "qwen3:8b");
+  assert.equal(JSON.parse(local.stdin!).stream, false);
 });
 test("Codex parses only assistant output and rejects failed turns, invalid events and absent answers", () => {
   assert.equal(
@@ -123,7 +129,7 @@ test("runner passes prompts through stdin, not argument strings, and honors remo
   assert.equal(result.code, 0);
   assert.equal(result.stdout.trim(), "snapshot\nwith spaces|undefined");
 });
-test("Ollama checks model availability before run so missing models are not downloaded", async () => {
+test("Ollama checks model availability without submitting a snapshot or downloading", async () => {
   const commands: Command[] = [];
   await assert.rejects(
     explain(
@@ -131,14 +137,98 @@ test("Ollama checks model availability before run so missing models are not down
       "snapshot",
       async (c) => {
         commands.push(c);
-        return { ...ok(), code: 1, stderr: "model not found" };
+        return c.args.at(-1)?.endsWith("/status")
+          ? ok('{"cloud":{"disabled":true}}')
+          : { ...ok(), code: 22, stderr: "model not found" };
       },
       new AbortController().signal,
     ),
     /Local model unavailable/,
   );
-  assert.equal(commands.length, 1);
-  assert.deepEqual(commands[0].args, ["show", "missing-model"]);
+  assert.equal(commands.length, 2);
+  assert.ok(commands[1].args.at(-1)?.endsWith("/show"));
+  assert.equal(JSON.parse(commands[1].stdin!).model, "missing-model");
+  assert.ok(commands.every((c) => !c.stdin?.includes("snapshot")));
+});
+test("Ollama refuses cloud-enabled, unknown, malformed and truncated status before sending context", async () => {
+  for (const result of [
+    ok('{"cloud":{"disabled":false}}'),
+    ok("{}"),
+    ok("null"),
+    ok("invalid"),
+    { ...ok('{"cloud":{"disabled":true}}'), truncated: true },
+  ]) {
+    let calls = 0;
+    await assert.rejects(
+      explain(
+        { provider: "ollama", model: "local" },
+        "private snapshot",
+        async (c) => {
+          calls++;
+          assert.equal(c.stdin, undefined);
+          return result;
+        },
+        new AbortController().signal,
+      ),
+    );
+    assert.equal(calls, 1);
+  }
+});
+test("Ollama rejects remote metadata and aliases before submitting context", async () => {
+  for (const metadata of [
+    { remote_model: "cloud-model" },
+    { remote_host: "https://example.invalid" },
+    { details: {} },
+    { model_info: null },
+  ]) {
+    const commands: Command[] = [];
+    await assert.rejects(
+      explain(
+        { provider: "ollama", model: "innocent-alias" },
+        "private snapshot",
+        async (c) => {
+          commands.push(c);
+          return ok(
+            JSON.stringify(
+              commands.length === 1
+                ? { cloud: { disabled: true } }
+                : { details: { format: "gguf" }, model_info: {}, ...metadata },
+            ),
+          );
+        },
+        new AbortController().signal,
+      ),
+      /metadata not verified/,
+    );
+    assert.equal(commands.length, 2);
+    assert.ok(commands.every((c) => !c.stdin?.includes("private snapshot")));
+  }
+});
+test("Ollama supports local generation and fails a disappearing model without falling back to pull", async () => {
+  for (const disappeared of [false, true]) {
+    const commands: Command[] = [];
+    const pending = explain(
+      { provider: "ollama", model: "local" },
+      "private snapshot",
+      async (c) => {
+        commands.push(c);
+        if (commands.length === 1) return ok('{"cloud":{"disabled":true}}');
+        if (commands.length === 2) return ok('{"details":{"format":"gguf"},"model_info":{}}');
+        return disappeared
+          ? { ...ok(), code: 22, stderr: "model not found" }
+          : ok('{"done":true,"response":"Local answer"}');
+      },
+      new AbortController().signal,
+    );
+    if (disappeared) await assert.rejects(pending, /model not found/);
+    else assert.equal(await pending, "Local answer");
+    assert.deepEqual(
+      commands.map((c) => c.args.at(-1)?.split("/").at(-1)),
+      ["status", "show", "generate"],
+    );
+    assert.match(JSON.parse(commands[2].stdin!).prompt, /private snapshot/);
+    await assert.rejects(access(commands[2].cwd!));
+  }
 });
 test("e overlays confirmations without executing them, Escape restores dialog and cancels pending explanation", async () => {
   const setup = await createTestRenderer({ width: 110, height: 28 });
