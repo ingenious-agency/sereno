@@ -132,6 +132,7 @@ export function httpCommand(site: Site): Command {
     file: "curl",
     args: [
       "-q",
+      "--globoff",
       "--silent",
       "--show-error",
       "--head",
